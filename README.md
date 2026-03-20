@@ -1,4 +1,4 @@
-# katnaperz
+# Catnappers Club
 
 A new Flutter project.
 
