@@ -35,6 +35,14 @@ android {
         versionCode flutter.versionCode
         versionName flutter.versionName
     }
+    configurations.all {
+        resolutionStrategy {
+            force "androidx.core:core:1.13.1"
+            force "androidx.core:core-ktx:1.13.1"
+            force "androidx.browser:browser:1.7.0"
+        }
+    }
+
 
     signingConfigs {
         release {
@@ -63,6 +71,7 @@ dependencies {
     implementation 'com.google.firebase:firebase-analytics'
     implementation 'com.google.firebase:firebase-auth'
     implementation 'com.facebook.android:facebook-android-sdk:latest.release'
+    implementation 'androidx.activity:activity:1.9.2'
 }
 
 flutter {

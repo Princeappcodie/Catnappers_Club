@@ -41,7 +41,7 @@ class ReferralModel {
     );
   }
 
-  // Convert to map for Firestore
+  // Convert to map for Firestore //
   Map<String, dynamic> toFirestore() {
     return {
       'referrerId': referrerId,
@@ -55,14 +55,14 @@ class ReferralModel {
     };
   }
 
-  // Check if referral is valid
+  // Check if referral is valid //
   bool isValid() {
     final now = DateTime.now();
     return usageCount < maxUsage && 
            (expiryDate == null || expiryDate!.isAfter(now));
   }
 
-  // Create a copy with updated fields
+  // Create a copy with updated fields //
   ReferralModel copyWith({
     String? id,
     String? referrerId,
@@ -88,7 +88,7 @@ class ReferralModel {
   }
 }
 
-// Model for tracking referral redemptions
+// Model for tracking referral redemptions //
 class ReferralRedemption {
   final String id;
   final String referralId;

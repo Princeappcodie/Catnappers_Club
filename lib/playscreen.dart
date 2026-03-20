@@ -1,12 +1,16 @@
 import 'dart:async';
 import 'dart:ui';
 import 'dart:io';
+import 'package:alarm/alarm.dart';
+import 'package:Catnappers_club/services/temp_cache_service.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
-import 'package:Catnappers/services/temp_cache_service.dart';
+import 'package:path_provider/path_provider.dart';
+import 'main.dart';
+import 'models/authmanager.dart';
 import 'session_state.dart'; // Import session state
 import 'Subscription.dart'; // Import Subscription screen
 
@@ -19,8 +23,7 @@ class Playscreen extends StatefulWidget {
   final String trackId;
   final String description;
   final String bestEnvironment;
-  final bool isSubscribed; // Added parameter
-// 🔔 Alarm config passed from Home
+  final bool isSubscribed;
   final bool isAlarmEnabled;
   final String? alarmSound;
   final String backgroundImage;
@@ -37,13 +40,9 @@ class Playscreen extends StatefulWidget {
     required this.bestEnvironment,
     required this.isSubscribed,
     required this.backgroundImage,
-
-
-    // 🔔 Alarm
     required this.isAlarmEnabled,
     required this.alarmSound,
   }) : super(key: key);
-
 
   @override
   State<Playscreen> createState() => _PlayscreenState();
@@ -59,8 +58,6 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
   late AnimationController _headerController;
   late Animation<double> _headerOpacity;
   late Animation<double> _headerScale;
-  late AnimationController _videoControllerAnimation;
-  late Animation<Offset> _videoOffset;
   late AnimationController _playButtonController;
   late Animation<double> _playButtonScale;
   late AnimationController _contentController;
@@ -68,43 +65,59 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
   late Animation<Offset> _contentOffset;
   late AnimationController _bottomNavController;
   late Animation<Offset> _bottomNavOffset;
+  late AnimationController _discController;
+  final List<String> _downloadMessages = [
+    "Preparing your soundscape...",
+    "Warming up cozy vibes...",
+    "Almost ready for relaxation...",
+    "Downloading audio...",
+  ];
+
+  int _currentMessageIndex = 0;
+  Timer? _messageTimer;
+
   final AudioPlayer audioPlayer = AudioPlayer();
-  final AudioPlayer _alarmPlayer = AudioPlayer(); // Added for alarm sound
-  final String _selectedAlarmSound = 'alarming1.mp3'; // Default alarm sound
-  bool _alarmTriggered = false; // Added for alarm state
+  // final AudioPlayer _alarmPlayer = AudioPlayer(); //
+  // final String _selectedAlarmSound = 'Alarm1.mp3'; //
   Timer? _timer;
-  Timer? _previewTimer; // Timer for 30-second preview
+  Timer? _previewTimer;
   int _remainingTime = 0;
-  late VideoPlayerController _videoController;
-  bool _videoInitialized = false;
-  bool _isFullScreen = false;
+  // StreamSubscription? _alarmSubscription; //
 
   late AnimationController _introFadeController;
   late Animation<double> _introFadeAnimation;
 
-
-
-
-
-  // Intro Video State
+  bool _isGuestUser = false;
+  bool _guestLoaded = false;
+  bool _downloadDialogVisible = false;
+  String? _currentStreamingUrl;
   VideoPlayerController? _introVideoController;
   bool _showIntroVideo = false;
   bool _introVideoInitialized = false;
   bool _timerStarted = false;
+  StreamSubscription? _durationSub;
+  StreamSubscription? _positionSub;
+  StreamSubscription? _playerStateSub;
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
 
+    final hours = twoDigits(duration.inHours);
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+
+    if (duration.inHours > 0) {
+      return "$hours:$minutes:$seconds";
+    } else {
+      return "$minutes:$seconds";
+    }
+  }
 
   @override
   void initState() {
     super.initState();
-    _remainingTime = widget.timerDuration * 60;  // Converting minutes to seconds //
-
-    // Determine if we should show intro video
+    _loadGuestStatus();
+    _remainingTime = widget.timerDuration * 60;
     _showIntroVideo = !hasVideoPlayedThisSession;
-
-    // Check for intro video before starting playback
-    _checkIntroVideo();
-
-    // Initialize animation controllers //
     _headerController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
@@ -116,15 +129,9 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
       CurvedAnimation(parent: _headerController, curve: Curves.easeOut),
     );
 
-    _videoControllerAnimation = AnimationController(
+    _discController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1000),
-    );
-    _videoOffset = Tween<Offset>(
-      begin: const Offset(0, -1),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(parent: _videoControllerAnimation, curve: Curves.easeOut),
+      duration: const Duration(seconds: 12),
     );
 
     _playButtonController = AnimationController(
@@ -149,17 +156,14 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
       CurvedAnimation(parent: _contentController, curve: Curves.easeOut),
     );
 
-
     _introFadeController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 600),
     );
-
     _introFadeAnimation = CurvedAnimation(
       parent: _introFadeController,
       curve: Curves.easeInOut,
     );
-
 
     _bottomNavController = AnimationController(
       vsync: this,
@@ -172,35 +176,224 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
       CurvedAnimation(parent: _bottomNavController, curve: Curves.bounceOut),
     );
 
-    // Start animations
     _headerController.forward();
-    _videoControllerAnimation.forward();
     _contentController.forward();
     _bottomNavController.forward();
-    if (isPlaying) {
-      _playButtonController.repeat(reverse: true);
-    }
-  }
-  void _onTimerFinished() {
-    debugPrint('🔔 Alarm trigger check — enabled=${widget.isAlarmEnabled}, sound=${widget.alarmSound}');
+    // Alarm ring stream is handled globally in main.dart
+    _checkIntroVideo();
 
-    if (widget.isAlarmEnabled) {
-      // Use passed sound or fallback to default
-      final soundToPlay = widget.alarmSound ?? _selectedAlarmSound;
-      _playAlarm(soundToPlay);
+  }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  void _showSignupDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        title: const Text('Sign up required'),
+        content: const Text(
+          'Sign up to unlock full access and start your 7-day free trial.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.popUntil(context, (route) => route.isFirst);
+            },
+            child: const Text('Later'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.pushReplacementNamed(context, '/signup');
+            },
+            child: const Text('Sign up'),
+          ),
+        ],
+      ),
+    );
+  }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  Future<void> _endSession() async {
+    try {
+      _timer?.cancel();
+      _previewTimer?.cancel();
+
+      await Alarm.stop(42);      // 🔔 Cancel scheduled alarm
+      await audioPlayer.stop();  // 🎵 Stop meditation audio
+    } catch (_) {}
+
+    if (mounted) {
+      setState(() {
+        isPlaying = false;
+        _timerStarted = false;
+      });
     }
   }
-///////////////////////////////////////////////////////////////////////////////////////
-  void _startTimerIfNeeded() {
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  Future<void> _loadGuestStatus() async {
+    _isGuestUser = await AuthManager.isGuest();
+    if (!mounted) return;
+    setState(() {
+      _guestLoaded = true;
+    });
+  }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  void _onTimerFinished() {
+    debugPrint('🔔 Timer finished - waiting for Alarm package to trigger ring');
+    // Alarm package handles the ringing via ringStream
+  }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  Future<void> _pauseTimer() async {
+    _timer?.cancel();        // stop UI timer
+    await Alarm.stop(42);    // cancel scheduled alarm
+  }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  void _showDownloadDialog() {
+    _downloadDialogVisible = true;
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: false,
+      barrierLabel: "Download",
+      barrierColor: Colors.black54,
+      transitionDuration: const Duration(milliseconds: 400),
+      pageBuilder: (context, animation, secondaryAnimation) {
+
+        int messageIndex = 0;
+        Timer? dialogTimer;
+
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+
+            dialogTimer ??= Timer.periodic(
+              const Duration(seconds: 2),
+                  (_) {
+                setStateDialog(() {
+                  messageIndex =
+                      (messageIndex + 1) % _downloadMessages.length;
+                });
+              },
+            );
+
+            return Center(
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
+                  width: MediaQuery.of(context).size.width * 0.8,
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+
+                      SizedBox(
+                        height: 140,
+                        child: Image.asset(
+                          "assets/take-it-easy-relax.gif",
+                          fit: BoxFit.contain,
+                        ),
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      const CircularProgressIndicator(color: Colors.white),
+
+                      const SizedBox(height: 20),
+
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 500),
+                        child: Text(
+                          _downloadMessages[messageIndex],
+                          key: ValueKey(messageIndex),
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+
+      transitionBuilder: (context, animation, secondaryAnimation, child) {
+        return FadeTransition(
+          opacity: animation,
+          child: ScaleTransition(
+            scale: CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutBack,
+            ),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  void _resumeTimer() async {
+    if (_remainingTime <= 0) return;
+
+    _timer?.cancel();
+
+    // 🔔 schedule again with remaining time
+    await _scheduleAlarm();
+
+    debugPrint("▶ Timer resumed");
+
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      if (!mounted) return;
+
+      if (_remainingTime > 0) {
+        setState(() {
+          _remainingTime--;
+        });
+      } else {
+        timer.cancel();
+
+        // let the Alarm plugin handle ringing via background notification //
+
+        try {
+          await audioPlayer.stop();
+        } catch (_) {}
+
+        if (!mounted) return;
+
+        setState(() {
+          isPlaying = false;
+          _timerStarted = false;
+        });
+
+        _discController.stop();
+        _playButtonController.stop();
+        _playButtonController.reset();
+
+        debugPrint("⏰ Timer finished");
+      }
+    });
+  }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  void _startTimerIfNeeded() async {
     if (_timerStarted) return;
 
     _timerStarted = true;
     _remainingTime = widget.timerDuration * 60;
 
-    debugPrint('⏱ Timer auto-started with audio');
+    await _scheduleAlarm(); // schedule once
     _startTimer();
   }
-////////////////////////////////////////////////////////////////////////////////////////
+
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   void _onAudioAutoStarted() {
     if (!mounted) return;
 
@@ -208,13 +401,16 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
       isPlaying = true;
     });
 
+    // ✅ START DISC ROTATION HERE
+    if (!_discController.isAnimating) {
+      _discController.repeat();
+    }
+
     _playButtonController.repeat(reverse: true);
   }
-///////////////////////////////////////////////////////////////////////////////////////////
-
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   Future<void> _checkIntroVideo() async {
-    debugPrint(
-        "Checking intro video. hasVideoPlayedThisSession: $hasVideoPlayedThisSession");
+    debugPrint("Checking intro video. hasVideoPlayedThisSession: $hasVideoPlayedThisSession");
 
     if (hasVideoPlayedThisSession) {
       _startPlayback();
@@ -237,27 +433,21 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
         _showIntroVideo = true;
       });
 
-      // 🔥 Fade IN intro
       _introFadeController.forward(from: 0);
-
       _introVideoController!.addListener(_introVideoListener);
       await _introVideoController!.play();
     } catch (e) {
       debugPrint("Error initializing intro video: $e");
-
       if (!mounted) return;
       _startPlayback();
     }
   }
-
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   Future<void> _fadeOutAndCloseIntro() async {
     if (!_showIntroVideo) return;
-
-    await _introFadeController.reverse(); // 🔥 FADE OUT
-
+    await _introFadeController.reverse();
     if (!mounted) return;
-
     _introVideoController?.removeListener(_introVideoListener);
     _introVideoController?.pause();
 
@@ -268,13 +458,13 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
     _startPlayback();
   }
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   void _introVideoListener() {
     final controller = _introVideoController;
     if (controller == null || !controller.value.isInitialized) return;
 
     final value = controller.value;
 
-    // Prevent multiple triggers
     if (!value.isPlaying &&
         value.position >= value.duration &&
         value.duration > Duration.zero &&
@@ -282,28 +472,23 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
       _fadeOutAndCloseIntro();
     }
   }
-
-
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   void _startPlayback() {
     if (!mounted) return;
 
-    // Ensure intro is fully hidden
     setState(() {
       _showIntroVideo = false;
       _introVideoInitialized = false;
     });
 
-    // Reset fade controller for next time
-    if (_introFadeController.isAnimating ||
-        _introFadeController.value != 0) {
+    if (_introFadeController.isAnimating || _introFadeController.value != 0) {
       _introFadeController.reset();
     }
 
     setupAudio();
-    _initializeVideo();
+
   }
-
-
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   void _finishIntroVideo() {
     if (!mounted || !_showIntroVideo) return;
 
@@ -316,124 +501,68 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
 
     _startPlayback();
   }
-
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   void _skipIntro() {
     _fadeOutAndCloseIntro();
   }
-
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   Future<void> _dontShowAgain() async {
-    hasVideoPlayedThisSession = true;
+    hasVideoPlayedThisSession = true;   // ✅ Mark intro as watched for this session
     await _fadeOutAndCloseIntro();
   }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+  Future<void> _scheduleAlarm() async {
+    if (!widget.isAlarmEnabled) return;
+    if (_remainingTime <= 0) return;
 
-  Future<void> _initializeVideo() async {
-    String url = widget.videoUrl.trim().replaceAll('"', '');
+    await Alarm.stop(42);
 
-    if (url.isEmpty) {
-      print("Invalid URL for video");
-      await _initAssetFallback();
-      return;
+    String soundAsset = widget.alarmSound ?? 'Alarm1.mp3';
+    if (!soundAsset.startsWith('assets/')) {
+      soundAsset = 'assets/$soundAsset';
     }
+    final audioPath = await _materializeAlarmAsset(soundAsset);
 
-    final isLocal = url.startsWith('/') || url.startsWith('file://');
-    if (isLocal) {
-      try {
-        var localPath = url;
-        if (localPath.startsWith('file://')) {
-          localPath = localPath.substring(7);
-        }
-        _videoController = VideoPlayerController.file(File(localPath),
-            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true));
-        await _videoController.initialize();
-        _videoController.setVolume(0.0);
-        _videoController.setLooping(true);
-        if (mounted) {
-          setState(() {
-            _videoInitialized = true;
-          });
-          _videoController.play();
-        }
-        return;
-      } catch (e) {
-        print("Error initializing local video: $e");
-        await _initAssetFallback();
-        return;
-      }
-    }
+    final alarmSettings = AlarmSettings(
+      id: 42,
+      dateTime: DateTime.now().add(Duration(seconds: _remainingTime + 1)),
 
-    if (!await _checkConnectivity()) {
-      await _initAssetFallback();
-      return;
-    }
+      assetAudioPath: soundAsset,
+      loopAudio: true,
+      vibrate: true,
+      volume: 1.0,
+      fadeDuration: 3.0,
+      warningNotificationOnKill: Platform.isIOS,
+      androidFullScreenIntent: true,
+      notificationSettings: const NotificationSettings(
+        title: 'Nap Complete 🌙',
+        body: 'Your nap timer has finished.',
+        stopButton: 'Stop',
+      ),
+    );
 
-    if (url.startsWith('http://')) {
-      url = 'https://' + url.substring(7);
-    }
+    await Alarm.set(alarmSettings: alarmSettings);
 
+    debugPrint("🔔 Alarm scheduled for $_remainingTime seconds");
+  }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  Future<String> _materializeAlarmAsset(String assetPath) async {
     try {
-      // 📥 Cache Video Logic
-      debugPrint('Downloading/Caching video for smooth playback: $url');
-      String playPath = url;
-      bool isCached = false;
-
-      try {
-        final cachedPath = await TempCacheService.getCachedFilePath(url);
-        if (cachedPath != url) {
-          playPath = cachedPath;
-          isCached = true;
-        }
-      } catch (e) {
-        debugPrint('Video caching failed: $e');
-      }
-
-      if (isCached) {
-         debugPrint('🎬 Playing video from cache: $playPath');
-         _videoController = VideoPlayerController.file(
-           File(playPath),
-           videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-         );
-      } else {
-         // Fallback to network if cache failed
-         debugPrint('🎬 Playing video from network: $playPath');
-         _videoController = VideoPlayerController.networkUrl(
-            Uri.parse(playPath),
-            videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
-         );
-      }
-
-      await _videoController.initialize();
-      _videoController.setVolume(0.0);
-      _videoController.setLooping(true);
-      if (mounted) {
-        setState(() {
-          _videoInitialized = true;
-        });
-        _videoController.play();
-      }
-    } catch (e) {
-      print("Error initializing video: $e");
-      await _initAssetFallback();
+      final bytes = await rootBundle.load(assetPath);
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/alarm_ringtone.mp3');
+      await file.writeAsBytes(bytes.buffer.asUint8List(), flush: true);
+      return file.path;
+    } catch (_) {
+      return assetPath;
     }
   }
 
-  Future<void> _initAssetFallback() async {
-    try {
-      _videoController = VideoPlayerController.asset('assets/newIntro.mp4');
-      await _videoController.initialize();
-      _videoController.setVolume(0.0);
-      _videoController.setLooping(true);
-      if (mounted) {
-        setState(() {
-          _videoInitialized = true;
-        });
-        _videoController.play();
-      }
-    } catch (e) {
-      print('Failed to init asset fallback: $e');
-    }
-  }
-  void _startTimer() {
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  void _startTimer() async {
     _timer?.cancel();
 
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) async {
@@ -445,228 +574,26 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
         });
       } else {
         timer.cancel();
+        // let the Alarm plugin handle ringing via background notification
 
-        debugPrint('⏰ Timer finished');
-
-        // 🔊 STOP AUDIO (outside setState)
         try {
-          await audioPlayer.pause();
           await audioPlayer.stop();
-        } catch (e) {
-          debugPrint('Error stopping audio: $e');
-        }
+        } catch (e) {}
 
-        if (!mounted) return;
 
         setState(() {
           isPlaying = false;
           _timerStarted = false;
-          _playButtonController.stop();
-          _playButtonController.reset();
         });
 
-        // 🔔 Trigger alarm
-        _onTimerFinished();
+        _discController.stop();
+        _playButtonController.stop();
+        _playButtonController.reset();
       }
     });
   }
 
-  void _playAlarm(String alarmSound) async {
-    debugPrint('🔔 Playing Alarm: $alarmSound');
-
-    if (!_alarmTriggered) {
-      setState(() {
-        _alarmTriggered = true;
-      });
-
-      try {
-        // 🔊 Force Max Volume
-        await _alarmPlayer.setVolume(1.0);
-
-        // Set alarm to loop
-        await _alarmPlayer.setReleaseMode(ReleaseMode.loop);
-
-        // Ensure path is clean for AssetSource
-        String cleanPath = alarmSound;
-        if (cleanPath.startsWith('assets/')) {
-          cleanPath = cleanPath.substring(7);
-        }
-        debugPrint('🔔 Asset Source: $cleanPath');
-
-        await _alarmPlayer.play(AssetSource(cleanPath));
-
-
-        // Show dialog box with stop button
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (BuildContext context) {
-            return AlertDialog(
-              backgroundColor: Colors.transparent,
-              insetPadding: const EdgeInsets.symmetric(horizontal: 24),
-              contentPadding: EdgeInsets.zero,
-              content: ClipRRect(
-                borderRadius: BorderRadius.circular(22),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 24),
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Colors.white.withOpacity(0.55),
-                          Colors.grey.shade200.withOpacity(0.45),
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.6),
-                        width: 1.1,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.18),
-                          blurRadius: 18,
-                          spreadRadius: 2,
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        // 🔔 Icon
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: LinearGradient(
-                              colors: [Colors.orangeAccent.shade200, Colors.amber.shade300],
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.orange.withOpacity(0.35),
-                                blurRadius: 14,
-                                spreadRadius: 1,
-                              ),
-                            ],
-                          ),
-                          child: const Icon(
-                            Icons.alarm,
-                            size: 28,
-                            color: Colors.black87,
-                          ),
-                        ),
-
-                        const SizedBox(height: 16),
-
-                        // 💤 Title
-                        const Text(
-                          'Nap Complete 🌙',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.black87,
-                            fontSize: 19,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: 0.4,
-                          ),
-                        ),
-
-                        const SizedBox(height: 8),
-
-                        // ✨ Message
-                        Text(
-                          'You took a mindful break.\nYour body & mind thank you ✨',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: Colors.black.withOpacity(0.7),
-                            fontSize: 15,
-                            height: 1.45,
-                            fontWeight: FontWeight.w400,
-                          ),
-                        ),
-
-                        const SizedBox(height: 22),
-
-                        // 🛑 Stop Button
-                        SizedBox(
-                          width: double.infinity,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: const LinearGradient(
-                                colors: [
-                                  Color(0xFFE84141), // Orange
-                                  Color(0xFFFFC107), // Yellow
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              ),
-                              borderRadius: BorderRadius.circular(14),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.red.withOpacity(0.45),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 5),
-                                ),
-                              ],
-                            ),
-                            child: ElevatedButton(
-                              onPressed: () {
-                                Navigator.pop(context);
-                                _stopAlarm();
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.transparent,
-                                shadowColor: Colors.transparent,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 13),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
-                              child: const Text(
-                                'STOP ALARM',
-                                style: TextStyle(
-                                  fontSize: 15.5,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 1.0,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-        // Set 1-minute timer to automatically stop alarm //
-        Future.delayed(Duration(minutes: 1), () {
-          if (_alarmTriggered) {
-            _stopAlarm();
-            // Close dialog if it's still open
-            Navigator.of(context).popUntil((route) => route.isFirst);
-          }
-        });
-      } catch (e) {
-        print('Error playing alarm: $e');
-        setState(() {
-          _alarmTriggered = false;
-        });
-      }
-    }
-  }
-
-  void _stopAlarm() {
-    _alarmPlayer.stop();
-    setState(() {
-      _alarmTriggered = false;
-    });
-  }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   void showSubscriptionDialog() {
     showDialog(
@@ -710,6 +637,7 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
     );
   }
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   void _onItemTapped(int index) {
     setState(() {
       _selectedIndex = index;
@@ -729,284 +657,252 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
       }
     });
   }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
   @override
   void dispose() {
-    _introVideoController?.dispose();
-    if (_videoInitialized) {
-      _videoController.dispose();
-    }
-    _timer?.cancel();
-    _previewTimer?.cancel();
-    audioPlayer.dispose();
-    _alarmPlayer.dispose(); // Added to dispose alarm player
-    _headerController.dispose();
-    _videoControllerAnimation.dispose();
+    // STOP animations FIRST
+    _discController.stop();
+    _playButtonController.stop();
+    _headerController.stop();
+    _contentController.stop();
+    _bottomNavController.stop();
+    _introFadeController.stop();
+    _discController.dispose();
     _playButtonController.dispose();
+    _headerController.dispose();
     _contentController.dispose();
     _bottomNavController.dispose();
     _introFadeController.dispose();
+    _timer?.cancel();
+    _previewTimer?.cancel();
+    _durationSub?.cancel();
+    _positionSub?.cancel();
+    _playerStateSub?.cancel();
+    audioPlayer.dispose();
+    _introVideoController?.dispose();
 
     super.dispose();
   }
 
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   Future<bool> _checkConnectivity() async {
     var connectivityResult = await Connectivity().checkConnectivity();
     return !connectivityResult.contains(ConnectivityResult.none);
   }
-
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   void _showCustomSnackBar(String message, {bool isError = false}) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).removeCurrentSnackBar();
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = scaffoldMessengerKey.currentState;
+    if (messenger == null) return;
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
       SnackBar(
-        elevation: 0,
-        backgroundColor: Colors.transparent,
-        behavior: SnackBarBehavior.floating,
+        content: Text(message),
         duration: const Duration(seconds: 3),
-        content: Stack(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: isError
-                      ? [Colors.red.shade800, Colors.redAccent.shade200]
-                      : [Colors.indigo.shade600, Colors.blueAccent.shade200],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: isError
-                        ? Colors.red.withOpacity(0.3)
-                        : Colors.blue.withOpacity(0.3),
-                    blurRadius: 20,
-                    spreadRadius: 2,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
-                border: Border.all(
-                  color: Colors.white.withOpacity(0.2),
-                  width: 1.0,
-                ),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      isError ? Icons.error_outline_rounded : Icons.music_note_rounded,
-                      color: Colors.white,
-                      size: 24,
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          isError ? 'Oops!' : 'Just a Moment',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.9),
-                            fontSize: 12,
-                            fontWeight: FontWeight.w500,
-                            letterSpacing: 0.5,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          message,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            height: 1.2,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  void _startGuestPreview() {
+    _previewTimer?.cancel();
 
+    _previewTimer = Timer(const Duration(seconds: 30), () async {
+      debugPrint('⛔ Guest preview / trial ended');
+
+      try {
+        await audioPlayer.stop();
+      } catch (_) {}
+
+      _timer?.cancel();
+
+      if (!mounted) return;
+
+      setState(() {
+        isPlaying = false;
+        _timerStarted = false;
+        _playButtonController.stop();
+        _playButtonController.reset();
+      });
+      _showSignupDialog();
+    });
+  }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   Future<void> setupAudio() async {
     try {
       final rawPath = widget.trackPath.trim().replaceAll('"', '');
       debugPrint('Audio setup: path=$rawPath');
-      final isLocal = rawPath.startsWith('/') || rawPath.startsWith('file://');
-      debugPrint('Audio source: ${isLocal ? 'local' : 'remote'}');
+
+      final isLocal =
+          rawPath.startsWith('/') || rawPath.startsWith('file://');
+
       await audioPlayer.setPlayerMode(PlayerMode.mediaPlayer);
 
+      /// =========================
+      /// 🔹 ATTACH PLAYER STATE LISTENER FIRST
+      /// =========================
+      _playerStateSub?.cancel();
+      _playerStateSub =
+          audioPlayer.onPlayerStateChanged.listen((state) async {
+            if (!mounted) return;
+
+            final playing = state == PlayerState.playing;
+
+            setState(() {
+              isPlaying = playing;
+            });
+
+            if (playing) {
+
+              /// ✅ CLOSE DOWNLOAD DIALOG
+              if (_downloadDialogVisible) {
+                if (Navigator.of(context, rootNavigator: true).canPop()) {
+                  Navigator.of(context, rootNavigator: true).pop();
+                }
+                _downloadDialogVisible = false;
+
+                /// 🔥 START BACKGROUND CACHING
+                if (_currentStreamingUrl != null) {
+                  Future(() async {
+                    await TempCacheService
+                        .downloadAndCache(_currentStreamingUrl!);
+                  });
+                  _currentStreamingUrl = null;
+                }
+              }
+
+              _onAudioAutoStarted();
+
+              /// 🔥 FIXED TIMER LOGIC 🔥 ///
+              if (!_timerStarted) {
+                _startTimerIfNeeded();          // first time //
+              } else if (_remainingTime > 0) {
+                await _scheduleAlarm();         // reschedule alarm //
+                _resumeTimer();                 // resume from remaining time //
+              }
+
+              if (_isGuestUser || !widget.isSubscribed) {
+                _startGuestPreview();
+              }
+
+            } else {
+              _discController.stop();
+              _playButtonController.stop();
+              _playButtonController.reset();
+              _previewTimer?.cancel();
+
+              if (state == PlayerState.paused) {
+                if (_remainingTime > 0) {
+                  await _pauseTimer();   // pause timer properly //
+                }
+              }
+
+              if (state == PlayerState.stopped ||
+                  state == PlayerState.completed) {
+                _timer?.cancel();
+              }
+            }
+          });
+
+      /// =========================
+      /// 🔹 LOCAL FILE
+      /// =========================
       if (isLocal) {
         var localPath = rawPath;
         if (localPath.startsWith('file://')) {
           localPath = localPath.substring(7);
         }
-        debugPrint('Audio play request (local): $localPath');
-        await audioPlayer.setReleaseMode(ReleaseMode.loop);
+
+        await audioPlayer.setReleaseMode(
+            widget.isSubscribed ? ReleaseMode.loop : ReleaseMode.stop);
+
         await audioPlayer.play(DeviceFileSource(localPath));
-        _startTimerIfNeeded();
-        _onAudioAutoStarted();
-      } else {
+      }
+
+      /// =========================
+      /// 🔹 REMOTE FILE
+      /// =========================
+      else {
         var url = rawPath;
+
         if (url.startsWith('http://')) {
-          url = 'https://' + url.substring(7);
-          debugPrint('Audio URL upgraded to HTTPS: $url');
+          url = 'https://${url.substring(7)}';
         }
+
         if (!await _checkConnectivity()) {
-          debugPrint('Audio not playing: no internet connectivity');
           if (mounted) {
             _showCustomSnackBar('No internet connection', isError: true);
           }
           return;
         }
 
-        // 📥 Cache Audio Logic
-        String playPath = url;
-        bool isCached = false;
-        try {
-          if (mounted) {
-            _showCustomSnackBar('Buffering audio for smooth playback... ⏳');
-          }
-          final cachedPath = await TempCacheService.getCachedFilePath(url);
-          if (cachedPath != url) {
-            playPath = cachedPath;
-            isCached = true;
-          }
-        } catch (e) {
-          debugPrint('⚠️ Caching failed, falling back to streaming: $e');
-        }
+        final existingPath =
+        await TempCacheService.getExistingCachedFile(url);
 
-        if (widget.isSubscribed) {
-          debugPrint('Audio playing in full mode (loop)');
-          await audioPlayer.setReleaseMode(ReleaseMode.loop);
+        await audioPlayer.setReleaseMode(
+            widget.isSubscribed ? ReleaseMode.loop : ReleaseMode.stop);
 
-          if (isCached) {
-             debugPrint('📂 Playing from cache: $playPath');
-             await audioPlayer.play(DeviceFileSource(playPath));
-             _onAudioAutoStarted();
-             _startTimerIfNeeded();
-
-
-          } else {
-             await audioPlayer.play(UrlSource(playPath)).timeout(const Duration(seconds: 25), onTimeout: () {
-              throw TimeoutException('Playback connect timeout (25s)');
-             });
-          }
+        if (existingPath != null) {
+          /// ✅ Play from cache
+          debugPrint('📂 Playing from cache');
+          await audioPlayer.play(DeviceFileSource(existingPath));
         } else {
-          debugPrint('Audio playing in preview mode (30s)');
-          await audioPlayer.setReleaseMode(ReleaseMode.stop);
+          /// 🌐 Stream immediately
+          debugPrint('🌐 Streaming immediately');
 
-          if (isCached) {
-             debugPrint('📂 Playing from cache (preview): $playPath');
-             await audioPlayer.play(DeviceFileSource(playPath));
-             _onAudioAutoStarted();
-             _startTimerIfNeeded();
+          _currentStreamingUrl = url;
+          _downloadDialogVisible = true;
+          _showDownloadDialog();
 
-          } else {
-             await audioPlayer.play(UrlSource(playPath)).timeout(const Duration(seconds: 25), onTimeout: () {
-               throw TimeoutException('Playback connect timeout (25s)');
-             });
-          }
+          await audioPlayer.play(UrlSource(url)).timeout(
+            const Duration(seconds: 25),
+            onTimeout: () {
+              throw TimeoutException('Playback connect timeout (25s)');
+            },
+          );
         }
       }
 
       if (!mounted) return;
-      debugPrint('Audio setup complete');
 
-      audioPlayer.onDurationChanged.listen((newDuration) {
-        if (!mounted) return;
-        setState(() {
-          _duration = newDuration;
-        });
-      });
+      /// =========================
+      /// 🔹 DURATION & POSITION LISTENERS
+      /// =========================
 
-      audioPlayer.onPositionChanged.listen((newPosition) {
-        if (!mounted) return;
-        setState(() {
-          _position = newPosition;
-        });
-      });
+      _durationSub?.cancel();
+      _positionSub?.cancel();
 
-      audioPlayer.onPlayerStateChanged.listen((state) {
-        if (!mounted) return;
+      _durationSub =
+          audioPlayer.onDurationChanged.listen((newDuration) {
+            if (!mounted) return;
+            setState(() => _duration = newDuration);
+          });
 
-        debugPrint('Audio player state changed: $state');
-        final playing = state == PlayerState.playing;
+      _positionSub =
+          audioPlayer.onPositionChanged.listen((newPosition) {
+            if (!mounted) return;
+            setState(() => _position = newPosition);
+          });
 
-        setState(() {
-          isPlaying = playing;
-
-          if (playing) {
-            _playButtonController.repeat(reverse: true);
-
-            // if (!_timerStarted) {
-            //   _timerStarted = true;
-            //
-            //   // 🔑 RESET TIMER HERE (CRITICAL)
-            //   _remainingTime = widget.timerDuration * 60;
-            //
-            //   debugPrint('⏱ Timer started: $_remainingTime seconds');
-            //
-            //   _startTimer();
-            // }
-
-            if (!widget.isSubscribed) {
-              _previewTimer?.cancel();
-              _previewTimer = Timer(const Duration(seconds: 30), () {
-                debugPrint('Audio preview ended: stopping after 30 seconds');
-                audioPlayer.stop();
-                setState(() {
-                  isPlaying = false;
-                  _playButtonController.stop();
-                  _playButtonController.reset();
-                });
-                showSubscriptionDialog();
-              });
-            } else {
-              _previewTimer?.cancel();
-            }
-          }
-
-          else {
-            _playButtonController.stop();
-            _playButtonController.reset();
-            debugPrint('Audio state: not playing ($state)');
-            _previewTimer?.cancel();
-          }
-        });
-      });
+      debugPrint('✅ Audio setup complete');
 
     } catch (e) {
-      debugPrint('Audio not playing: error $e');
+      debugPrint('❌ Audio error: $e');
+
       if (mounted) {
-        _showCustomSnackBar('Failed to play audio: $e', isError: true);
+        _showCustomSnackBar(
+            'Failed to play audio. Please try again.',
+            isError: true);
+
+        if (_downloadDialogVisible &&
+            Navigator.of(context, rootNavigator: true).canPop()) {
+          Navigator.of(context, rootNavigator: true).pop();
+          _downloadDialogVisible = false;
+        }
       }
     }
   }
-
-  String _formatDuration(Duration duration) {
-    String twoDigits(int n) => n.toString().padLeft(2, '0');
-    final minutes = twoDigits(duration.inMinutes.remainder(60));
-    final seconds = twoDigits(duration.inSeconds.remainder(60));
-    return "$minutes:$seconds";
-  }
-
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -1014,77 +910,13 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
         final screenSize = MediaQuery.of(context).size;
         final screenHeight = constraints.maxHeight;
         final screenWidth = constraints.maxWidth;
-
-        final videoContainer = AnimatedContainer(
-          duration: const Duration(milliseconds: 500),
-          curve: Curves.easeInOut,
-          width: _isFullScreen ? screenWidth : 370,
-          height: _isFullScreen ? screenHeight : 240,
-          decoration: BoxDecoration(
-            color: _isFullScreen ? Colors.black : Colors.white.withOpacity(0.2),
-            borderRadius: _isFullScreen ? BorderRadius.zero : BorderRadius.circular(10),
-            border: _isFullScreen
-                ? null
-                : Border.all(
-              color: Colors.white.withOpacity(0.2),
-              width: 1,
-            ),
-            boxShadow: _isFullScreen
-                ? []
-                : [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.3),
-                blurRadius: 10,
-                spreadRadius: 2,
-              ),
-            ],
-          ),
-          child: Stack(
-            children: [
-              ClipRRect(
-                borderRadius: _isFullScreen ? BorderRadius.zero : BorderRadius.circular(15),
-                child: _videoInitialized
-                    ? SlideTransition(
-                  position: _videoOffset,
-                  child: VideoPlayer(_videoController),
-                )
-                    : const Center(child: CircularProgressIndicator(color: Colors.white)),
-              ),
-              Positioned(
-                bottom: 19,
-                right: 8,
-                child: GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _isFullScreen = !_isFullScreen;
-                    });
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      _isFullScreen ? Icons.fullscreen_exit : Icons.fullscreen,
-                      color: Colors.white,
-                      size: 24,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-
         final contentWidget = FadeTransition(
           opacity: _contentOpacity,
           child: SlideTransition(
             position: _contentOffset,
             child: Column(
               children: [
-                const SizedBox(height: 10),
-                // Centered Track Title - Beautiful & Dynamic //
+                const SizedBox(height: 5),
                 Padding(
                   padding: const EdgeInsets.only(left: 12, right: 24),
                   child: Text(
@@ -1093,7 +925,7 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                      color: Colors.white,            // ← Fixed: was black, now visible on dark bg
+                      color: Colors.white,
                       fontSize: 28,
                       fontWeight: FontWeight.w300,
                       letterSpacing: 1.2,
@@ -1108,7 +940,69 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+                const SizedBox(height: 20),
+                /// 🔥 Rotating Circular Disc
+                RotationTransition(
+                  turns: _discController,
+                  child: Container(
+                    width: 250,
+                    height: 250,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.6),
+                          blurRadius: 25,
+                          spreadRadius: 6,
+                        ),
+                      ],
+                    ),
+                    child: ClipOval(
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+
+                          /// 🎵 Outer Vinyl Disc (Black Background)
+                          Container(
+                            width: 250,
+                            height: 250,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  Colors.red.withOpacity(0.3),
+                                  Colors.green.withOpacity(0.3),
+                                  Colors.blue.withOpacity(0.3),
+                                ],
+                              ),
+                            ),
+                          ),
+
+                          /// 🖼 Local Album Image (FROM ASSETS)
+                          Container(
+                            width: 210,
+                            height: 210,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              image: DecorationImage(
+                                image: AssetImage('assets/sleeping-cat-3.jpeg'),
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                const SizedBox(height: 30),
+
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
@@ -1131,23 +1025,20 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
                               : [],
                         ),
                         child: IconButton(
-                          icon: Icon(
-                            isPlaying ? Icons.pause : Icons.play_arrow,
-                            color: Colors.white,
-                            size: 35,
-                          ),
-                          onPressed: () async {
-                            if (isPlaying) {
-                              await audioPlayer.pause();
-                              _previewTimer?.cancel();
-                              _timer?.cancel(); // ⏸ PAUSE TIMER HERE
+                            icon: Icon(
+                              isPlaying ? Icons.pause : Icons.play_arrow,
+                              color: Colors.white,
+                              size: 35,
+                            ),
+                            onPressed: () async {
+                              if (isPlaying) {
+                                await audioPlayer.pause();
+                                // _discController.stop();
+                              } else {
+                                await audioPlayer.resume();
+                                // _discController.repeat(); //
+                              }
                             }
-                            else {
-                              await audioPlayer.resume();
-                              _startTimer(); // ▶️ RESUME TIMER (DO NOT RESET)
-                            }
-
-                          },
                         ),
                       ),
                     ),
@@ -1304,10 +1195,8 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
                 width: screenWidth,
                 height: screenHeight,
                 decoration: BoxDecoration(
-                  image: _isFullScreen
-                      ? null
-                      : DecorationImage(
-                    image: AssetImage(widget.backgroundImage), // ✅ dynamic
+                  image: DecorationImage(
+                    image: AssetImage(widget.backgroundImage),
                     fit: BoxFit.cover,
                     colorFilter: const ColorFilter.mode(
                       Color.fromRGBO(0, 0, 0, 0.5),
@@ -1315,64 +1204,61 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
                     ),
                   ),
                 ),
-
                 child: SafeArea(
-                  child: _isFullScreen
-                      ? videoContainer
-                      : SingleChildScrollView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          child: Column(
-                            children: [
-                              FadeTransition(
-                                opacity: _headerOpacity,
-                                child: ScaleTransition(
-                                  scale: _headerScale,
-                                  child: Padding(
-                                    padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.05),
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
-                                          onPressed: () {
-                                            Navigator.pop(context);
-                                          },
-                                        ),
-                                        // ⏱ Timer Display
-                                        if (_timerStarted || _remainingTime < widget.timerDuration * 60)
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                            decoration: BoxDecoration(
-                                              color: Colors.black.withOpacity(0.5),
-                                              borderRadius: BorderRadius.circular(20),
-                                              border: Border.all(color: Colors.white.withOpacity(0.3)),
-                                            ),
-                                            child: Row(
-                                              children: [
-                                                const Icon(Icons.timer, color: Colors.white70, size: 16),
-                                                const SizedBox(width: 6),
-                                                Text(
-                                                  _formatDuration(Duration(seconds: _remainingTime)),
-                                                  style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontWeight: FontWeight.bold,
-                                                    fontFeatures: [FontFeature.tabularFigures()],
-                                                  ),
-                                                ),
-                                              ],
+                  child:SingleChildScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    child: Column(
+                      children: [
+                        FadeTransition(
+                          opacity: _headerOpacity,
+                          child: ScaleTransition(
+                            scale: _headerScale,
+                            child: Padding(
+                              padding: EdgeInsets.symmetric(horizontal: screenWidth * 0.05),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.arrow_back_ios, color: Colors.white),
+                                    onPressed: () async {
+                                      await _endSession();
+                                      Navigator.pop(context);
+                                    },
+                                  ),
+                                  if (!_isGuestUser &&
+                                      (_timerStarted || _remainingTime < widget.timerDuration * 60))
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black.withOpacity(0.5),
+                                        borderRadius: BorderRadius.circular(20),
+                                        border: Border.all(color: Colors.white.withOpacity(0.3)),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          const Icon(Icons.timer, color: Colors.white70, size: 16),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            _formatDuration(Duration(seconds: _remainingTime)),
+                                            style: const TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                              fontFeatures: [FontFeature.tabularFigures()],
                                             ),
                                           ),
-                                      ],
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                ),
+                                ],
                               ),
-                              const SizedBox(height: 10),
-                              videoContainer,
-                              contentWidget,
-                            ],
+                            ),
                           ),
                         ),
+                        const SizedBox(height: 10),
+                        contentWidget,
+                      ],
+                    ),
+                  ),
                 ),
               ),
               if (_showIntroVideo)
@@ -1380,90 +1266,82 @@ class _PlayscreenState extends State<Playscreen> with TickerProviderStateMixin {
                   child: FadeTransition(
                     opacity: _introFadeAnimation,
                     child: Container(
-
-                    color: Colors.black.withOpacity(0.9),
+                      color: Colors.black.withOpacity(0.9),
                       child: (_introVideoInitialized && _introVideoController != null)
                           ? Stack(
-                            children: [
-                              SizedBox(
-                                width: MediaQuery.of(context).size.width,
-                                height: MediaQuery.of(context).size.height,
-                                child: AspectRatio(
-                                  aspectRatio: MediaQuery.of(context).size.width /
-                                      MediaQuery.of(context).size.height, // 🔑 SCREEN RATIO
-                                  child: VideoPlayer(_introVideoController!),
+                        children: [
+                          SizedBox(
+                            width: MediaQuery.of(context).size.width,
+                            height: MediaQuery.of(context).size.height,
+                            child: AspectRatio(
+                              aspectRatio: MediaQuery.of(context).size.width /
+                                  MediaQuery.of(context).size.height,
+                              child: VideoPlayer(_introVideoController!),
+                            ),
+                          ),
+                          Positioned(
+                            bottom: 80,
+                            left: 20,
+                            right: 20,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.end,
+                              children: [
+                                TextButton(
+                                  onPressed: _skipIntro,
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(30),
+                                    ),
+                                    backgroundColor: Colors.white.withOpacity(0.15),
+                                  ),
+                                  child: const Text(
+                                    'Skip',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w500,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              Positioned(
-                                bottom: 80,
-                                left: 20,
-                                right: 20,
-                                child: Row(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    Row(
-                                      mainAxisAlignment: MainAxisAlignment.end,
-                                      children: [
-                                        // ⏭ Skip Button (Secondary)
-                                        TextButton(
-                                          onPressed: _skipIntro,
-                                          style: TextButton.styleFrom(
-                                            foregroundColor: Colors.white,
-                                            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(30),
-                                            ),
-                                            backgroundColor: Colors.white.withOpacity(0.15),
-                                          ),
-                                          child: const Text(
-                                            'Skip',
-                                            style: TextStyle(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w500,
-                                              letterSpacing: 0.5,
-                                            ),
-                                          ),
-                                        ),
-
-                                        const SizedBox(width: 14),
-
-                                        // ⭐ Don't Show Again (Primary)
-                                        ElevatedButton(
-                                          onPressed: _dontShowAgain,
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor: Colors.white,
-                                            foregroundColor: Colors.black,
-                                            elevation: 6,
-                                            shadowColor: Colors.black45,
-                                            padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 13),
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(30),
-                                            ),
-                                          ),
-                                          child: const Text(
-                                            "Don't show again",
-                                            style: TextStyle(
-                                              fontSize: 15,
-                                              fontWeight: FontWeight.w600,
-                                              letterSpacing: 0.6,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    )
-
-                                  ],
+                                const SizedBox(width: 14),
+                                ElevatedButton(
+                                  onPressed: _dontShowAgain,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.white,
+                                    foregroundColor: Colors.black,
+                                    elevation: 6,
+                                    shadowColor: Colors.black45,
+                                    padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 13),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(30),
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    "Don't show again",
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 0.6,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ],
-                          )
-                        : const Center(child: CircularProgressIndicator(color: Colors.white)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      )
+                          : const Center(child: CircularProgressIndicator(color: Colors.white)),
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
-          bottomNavigationBar: (_isFullScreen || _showIntroVideo)
+          bottomNavigationBar: ( _showIntroVideo)
               ? null
               : SlideTransition(
             position: _bottomNavOffset,

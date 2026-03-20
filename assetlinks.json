@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.catnappers.catnapperscl",
+      "sha256_cert_fingerprints": [
+        "13:13:F6:F7:45:90:E5:B5:4E:6E:A2:38:B9:54:BB:BD:0C:1F:96:8F:B7:E9:3A:CD:8E:19:40:AC:57:D3:CF:49"
+      ]
+    }
+  }
+]

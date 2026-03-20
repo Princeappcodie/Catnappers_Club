@@ -1,16 +1,13 @@
-import 'dart:io';
-import 'dart:ui';
-import 'package:Catnappers/Subscription.dart';
-import 'package:Catnappers/home.dart';
-import 'package:flutter/material.dart';
-import 'package:audioplayers/audioplayers.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:Catnappers_club/Subscription.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:package_info_plus/package_info_plus.dart';
-import 'services/referral_service.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'Signup.dart';
+import 'home.dart';
 import 'login.dart';
+import 'models/authmanager.dart';
 
 class Setting extends StatefulWidget {
   const Setting({Key? key}) : super(key: key);
@@ -20,339 +17,568 @@ class Setting extends StatefulWidget {
 }
 
 class _SettingState extends State<Setting> {
-  File? _profileImage;
-  String? _imageUrl;
-  final ImagePicker _picker = ImagePicker();
-
   String _appVersion = "";
   String _buildNumber = "";
 
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  /// 🔹  USER TYPE
+  bool _isGuestUser = false;
+  bool _guestLoaded = false;
+
+  bool get isGuest => _isGuestUser;
+
+
+  /// 🔒 Disable + fade wrapper
+  Widget disabledWrapper({
+    required bool enabled,
+    required Widget child,
+  }) {
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.4,
+      child: IgnorePointer(
+        ignoring: !enabled,
+        child: child,
+      ),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
-    _loadProfileImage();
     _printAppVersion();
+    _loadGuestStatus();
   }
 
   void _printAppVersion() async {
-    PackageInfo packageInfo = await PackageInfo.fromPlatform();
-
+    final packageInfo = await PackageInfo.fromPlatform();
     setState(() {
       _appVersion = packageInfo.version;
       _buildNumber = packageInfo.buildNumber;
     });
-
-    print("======= APP INFO =======");
-    print("Version: ${packageInfo.version}");
-    print("Build Number: ${packageInfo.buildNumber}");
-    print("========================");
   }
-
-  void _loadProfileImage() {
-    final user = _auth.currentUser;
-    if (user != null) {
-      _firestore.collection('users').doc(user.uid).snapshots().listen((doc) {
-        if (doc.exists && doc.data()?['profileImage'] != null) {
-          setState(() {
-            _imageUrl = doc['profileImage'];
-          });
-        }
-      });
+  //////////////////////////////
+  Future<void> _openUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (!await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    )) {
+      _showError('Could not open link');
     }
   }
 
-  Future<void> _pickImage() async {
-    final XFile? pickedFile = await _picker.pickImage(source: ImageSource.gallery);
-    if (pickedFile == null) return;
+////////////////////////////////
+  Future<void> _loadGuestStatus() async {
+    final isGuest = await AuthManager.isGuest();
+    if (!mounted) return;
 
-    File imageFile = File(pickedFile.path);
-    setState(() => _profileImage = imageFile);
-
-    await _uploadImage(imageFile);
+    setState(() {
+      _isGuestUser = isGuest;
+      _guestLoaded = true;
+    });
   }
-
-  Future<void> _uploadImage(File imageFile) async {
-    try {
-      final user = _auth.currentUser;
-      if (user == null) return;
-
-      final ref = FirebaseStorage.instance.ref().child('profile_images/${user.uid}.jpg');
-      await ref.putFile(imageFile);
-
-      String downloadUrl = await ref.getDownloadURL();
-
-      await _firestore.collection('users').doc(user.uid).set(
-        {'profileImage': downloadUrl},
-        SetOptions(merge: true),
-      );
-
-      setState(() => _imageUrl = downloadUrl);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile image updated successfully!')),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error uploading image: $e')),
-      );
-    }
-  }
-
+/////////////////////////////////////////
   void _showLogoutConfirmationDialog() {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Row(
-            children: const [
-              Icon(Icons.logout, color: Colors.redAccent, size: 28),
-              SizedBox(width: 10),
-              Text('Confirm Logout', style: TextStyle(fontWeight: FontWeight.bold)),
-            ],
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text('Confirm Logout'),
+        content: const Text('Are you sure you want to log out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(
+                color: Colors.black,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
-          content: const Text('Are you sure you want to log out?'),
-          actionsAlignment: MainAxisAlignment.spaceEvenly,
-          actions: [
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.grey[300],
-                foregroundColor: Colors.black87,
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
+              await AuthManager.clear();
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
+                    (_) => false,
+              );
+            },
+            child: const Text(
+              'Logout',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
               ),
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
             ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
-                foregroundColor: Colors.white,
+          ),
+        ],
+      ),
+    );
+  }
+  /// 🔥 DELETE ACCOUNT CONFIRMATION
+  void _showDeleteAccountDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          'Delete Account',
+          style: TextStyle(color: Colors.redAccent),
+        ),
+        content: const Text(
+          'This will permanently delete your account and all associated data.\n\n'
+              'This action cannot be undone.\n\n'
+              'Are you sure?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(
+                color: Colors.green,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
               ),
-              onPressed: () async {
-                try {
-                  await FirebaseAuth.instance.signOut();
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute(builder: (context) => const LoginScreen()),
-                        (route) => false,
-                  );
-                } catch (e) {
-                  Navigator.of(context).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error logging out: $e')),
-                  );
-                }
-              },
-              child: const Text('Logout'),
             ),
-          ],
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () async {
+              Navigator.pop(context);
+              await _deleteAccount();
+            },
+            child: const Text(
+              'Delete',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 🔥 DELETE CURRENT USER (AUTH + FIRESTORE)  🔥 ///
+  Future<void> _deleteAccount() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+
+      if (user == null) return;
+
+      final uid = user.uid;
+
+      // 1️⃣ Delete Firestore data
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(uid)
+          .delete();
+
+      // 2️⃣ Delete Firebase Auth user
+      await user.delete();
+
+      // 3️⃣ Go to Login
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+            (_) => false,
+      );
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'requires-recent-login') {
+        _showError(
+          'For security reasons, please log in again to delete your account.',
         );
-      },
+      } else {
+        _showError(e.message ?? 'Failed to delete account.');
+      }
+    } catch (e) {
+      _showError('Something went wrong. Please try again.');
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.redAccent,
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    // Responsive values
+    if (!_guestLoaded) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        ),
+      );
+    }
     final size = MediaQuery.of(context).size;
     final width = size.width;
     final height = size.height;
 
-    final double profileImageSize = width * 0.35; // ~140 on average phone
-    final double buttonWidth = width * 0.55; // ~200
-    final double titleFontSize = width * 0.07;
-    final double nameFontSize = width * 0.045;
-    final double versionFontSize = width * 0.028;
+    final profileImageSize = width * 0.45;
+    final nameFontSize = width * 0.08;
+    final versionFontSize = width * 0.028;
 
     return Scaffold(
-      extendBody: true,
-      body: Stack(
-        children: [
-          Container(
-            width: double.infinity,
-            height: double.infinity,
-            decoration: const BoxDecoration(
-              image: DecorationImage(
-                image: AssetImage('assets/2rotate.jpeg'),
-                fit: BoxFit.cover,
-              ),
-            ),
-            child: Container(
-              color: Colors.black.withOpacity(0.5),
-              child: Stack(
-                children: [
-                  SingleChildScrollView(
-                    padding: EdgeInsets.only(bottom: height * 0.1), // Space for version text
-                    child: Column(
-                      children: [
-                        SizedBox(height: height * 0.05), // ~35
-                        Text(
-                          "Settings",
-                          style: TextStyle(
-                            fontSize: titleFontSize,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                        SizedBox(height: height * 0.04),
+      body: Container(
+        decoration: const BoxDecoration(
+          image: DecorationImage(
+            image: AssetImage('assets/2rotate.jpeg'),
+            fit: BoxFit.cover,
+          ),
+        ),
+        child: Container(
+          color: Colors.black.withOpacity(0.55),
+          child: Column(
+            children: [
+              SizedBox(height: height * 0.06),
 
-                        // Profile Image
-                        Center(
-                          child: Stack(
+              /// 🔵 PROFILE IMAGE (TOP CENTER) 🔵///
+              Container(
+                width: profileImageSize,
+                height: profileImageSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white.withOpacity(0.5)),
+                  image: const DecorationImage(
+                    image: AssetImage('assets/sleeping-cat-3.jpeg'),
+                    fit: BoxFit.cover,
+                  ),
+                ),
+              ),
+
+              SizedBox(height: height * 0.025),
+
+              /// 👤 NAME 👤///
+              Text(
+                "Catnapper's World",
+                style: TextStyle(
+                  fontSize: nameFontSize,
+                  color: Colors.white,
+                  fontWeight: FontWeight.w300,
+                ),
+              ),
+
+              SizedBox(height: height * 0.03),
+
+              /// 🔽  REMAINING SCREEN CONTAINER   🔽 ///
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.08),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(24),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      /// 🔹 SCROLLABLE BUTTON AREA
+                      Expanded(
+                        child: SingleChildScrollView(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: width * 0.08,
+                            vertical: height * 0.04,
+                          ),
+                          child: Column(
                             children: [
-                              Container(
-                                width: profileImageSize,
-                                height: profileImageSize,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.white.withOpacity(0.2),
-                                  border: Border.all(
-                                    color: Colors.white.withOpacity(0.5),
-                                    width: 2,
+                              ///🟢 SIGNUP (GUEST ONLY) 🟢///
+                              if (isGuest) ...[
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton(
+                                    onPressed: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => const SignupScreen(),
+                                        ),
+                                      );
+                                    },
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor:
+                                      Colors.white.withOpacity(0.25),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 14,
+                                      ),
+                                    ),
+                                    child: const Text(
+                                      'SignUp',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
                                   ),
-                                  image: DecorationImage(
-                                    image: _profileImage != null
-                                        ? FileImage(_profileImage!)
-                                        : (_imageUrl != null
-                                        ? NetworkImage(_imageUrl!)
-                                        : const AssetImage('assets/logo.jpeg')) as ImageProvider,
-                                    fit: BoxFit.cover,
+                                ),
+                                SizedBox(height: height * 0.01),
+                              ],
+
+                              /// 🔴 LOGOUT 🔴 ///
+                              disabledWrapper(
+                                enabled: !isGuest,
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton(
+                                    onPressed:
+                                    _showLogoutConfirmationDialog,
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor:
+                                      Colors.white.withOpacity(0.2),
+                                      padding:
+                                      const EdgeInsets.symmetric(
+                                        vertical: 14,
+                                      ),
+                                    ),
+                                    child: const Text(
+                                      'Logout',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
-                              Positioned(
-                                bottom: 0,
-                                right: 0,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    shape: BoxShape.circle,
-                                    border: Border.all(
-                                      color: Colors.blue.withOpacity(0.5),
-                                      width: 2,
+                              SizedBox(height: height * 0.02),
+
+                              /// 🔴 SUBSCRIBE  🔴 ///
+                              disabledWrapper(
+                                enabled: true,
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton(
+                                    onPressed: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                          const Subscription(),
+                                        ),
+                                      );
+                                    },
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor:
+                                      Colors.white.withOpacity(0.2),
+                                      padding:
+                                      const EdgeInsets.symmetric(
+                                        vertical: 14,
+                                      ),
+                                    ),
+                                    child: const Text(
+                                      'Subscribe',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
                                   ),
-                                  child: IconButton(
-                                    iconSize: profileImageSize * 0.18,
-                                    icon: const Icon(Icons.edit, color: Colors.blue),
-                                    onPressed: _pickImage,
+                                ),
+                              ),
+                              SizedBox(height: height * 0.02),
+                              /// 🔄 RESTORE PURCHASES
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton(
+                                  onPressed: () {
+                                     Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => const Subscription(highlightRestore: true),
+                                        ),
+                                      ).then((_) {
+                                       // Optional: refresh state if needed
+                                     });
+                                   },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.white.withOpacity(0.2),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 14,
+                                    ),
                                   ),
+                                  child: const Text(
+                                    'Restore Purchases',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              SizedBox(height: height * 0.02),
+
+                              /// 🔴 DELETE PROFILE
+                              disabledWrapper(
+                                enabled: !isGuest,
+                                child: SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton(
+                                    onPressed: _showDeleteAccountDialog,
+
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor:
+                                      Colors.white.withOpacity(0.2),
+                                      padding:
+                                      const EdgeInsets.symmetric(
+                                        vertical: 14,
+                                      ),
+                                    ),
+                                    child: const Text(
+                                      'Delete Profile',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              SizedBox(height: height * 0.06),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              TextButton(
+                                onPressed: () {
+                                  _openUrl('https://forms.gle/5gKDyqXXNsdJRZ6j9');
+                                },
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min, // keeps the row compact
+                                  children: const [
+                                    Icon(
+                                      Icons.feedback,           // or Icons.mail, Icons.comment, Icons.send, etc.
+                                      size: 20,
+                                      color: Colors.white70,
+                                    ),
+                                    SizedBox(width: 3),        // space between icon and text
+                                    Text(
+                                      'Send Feedback',
+                                      style: TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 14,           // optional: adjust if needed
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],
                           ),
+                        ],
+                      ),
+                      /// 🔽 FIXED BOTTOM CONTENT (INSIDE CONTAINER) 🔽 ///
+                      Padding(
+                        padding: EdgeInsets.only(
+                          bottom: height * 0.02,
+                          // top: height * 0.01,
                         ),
+                        child: Column(
+                          children: [
+                            TextButton(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                      builder: (_) => Homescreen()),
+                                );
+                              },
+                              child: const Text(
+                                'Skip & Continue',
+                                style:
+                                TextStyle(color: Colors.white70, fontSize: 14,),
 
-                        SizedBox(height: height * 0.025),
-                        Text(
-                          "Name",
-                          style: TextStyle(
-                            fontSize: nameFontSize,
-                            color: Colors.white,
-                          ),
-                        ),
-
-                        SizedBox(height: height * 0.055),
-
-                        // Logout Button
-                        SizedBox(
-                          width: buttonWidth,
-                          child: ElevatedButton(
-                            onPressed: _showLogoutConfirmationDialog,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white.withOpacity(0.2),
-                              padding: EdgeInsets.symmetric(vertical: height * 0.02),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
                               ),
                             ),
-                            child: const Text(
-                              'Logout',
-                              style: TextStyle(color: Colors.white, fontSize: 16),
-                            ),
-                          ),
-                        ),
 
-                        SizedBox(height: height * 0.055),
-
-                        // Subscribe Button
-                        SizedBox(
-                          width: buttonWidth,
-                          child: ElevatedButton(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(builder: (context) => const Subscription()),
-                              );
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white.withOpacity(0.2),
-                              padding: EdgeInsets.symmetric(vertical: height * 0.02),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
+                            disabledWrapper(
+                              enabled: !isGuest,
+                              child: TextButton.icon(
+                                onPressed: () =>
+                                    Navigator.pushNamed(
+                                        context, '/referral'),
+                                icon: const Icon(Icons.share,
+                                    color: Colors.white70),
+                                label: const Text(
+                                  'Share App',
+                                  style: TextStyle(
+                                      color: Colors.white70),
+                                ),
                               ),
                             ),
-                            child: const Text(
-                              'Subscribe',
-                              style: TextStyle(color: Colors.white, fontSize: 16),
+                            const SizedBox(height: 8),
+                            /// 🔢 VERSION
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                TextButton(
+                                  onPressed: () {
+                                    _openUrl('https://catnappers.club/privacy-policy.html');
+                                  },
+                                  child: const Text(
+                                    'Privacy Policy',
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                  ),
+                                ),
+
+                                const SizedBox(width: 22),
+                                TextButton(
+                                  onPressed: () {
+                                    _openUrl('https://catnappers.club/terms-of-use.html');
+                                  },
+                                  child: const Text(
+                                    'Terms of Use',
+                                    style: TextStyle(
+                                      color: Colors.white70,
+                                      decoration: TextDecoration.underline,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                        ),
-
-                        SizedBox(height: height * 0.02),
-
-                        TextButton(
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (context) => Homescreen()),
-                            );
-                          },
-                          child: const Text(
-                            'Skip & Continue',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        ),
-
-                        SizedBox(height: height * 0.02),
-
-                        TextButton.icon(
-                          onPressed: () {
-                            Navigator.pushNamed(context, '/referral');
-                          },
-                          icon: const Icon(Icons.share, color: Colors.white70, size: 20),
-                          label: const Text(
-                            'Share App',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        ),
-
-                        SizedBox(height: height * 0.08), // Extra bottom padding
-                      ],
-                    ),
-                  ),
-
-                  // App Version at bottom center
-                  Positioned(
-                    bottom: height * 0.05,
-                    left: 0,
-                    right: 0,
-                    child: Center(
-                      child: Text(
-                        "v$_appVersion ($_buildNumber)",
-                        style: TextStyle(
-                          color: Colors.white70,
-                          fontSize: versionFontSize,
+                            const SizedBox(height: 6),
+                            Text(
+                              "v$_appVersion ($_buildNumber)",
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: versionFontSize,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
+                    ],
                   ),
-                ],
+                ),
               ),
-            ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

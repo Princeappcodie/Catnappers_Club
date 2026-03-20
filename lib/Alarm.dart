@@ -1,8 +1,8 @@
 import 'dart:ui';
-import 'package:Catnappers/home.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'home.dart';
 
 class TimerScreen extends StatefulWidget {
   const TimerScreen({Key? key}) : super(key: key);
@@ -122,11 +122,11 @@ class _TimerScreenState extends State<TimerScreen>
       extendBody: true,
       body: Stack(
         children: [
-          // ===================== BACKGROUND =====================
+          // ===================== BACKGROUND ===================== //
           Container(
             decoration: BoxDecoration(
               image: DecorationImage(
-                image: const AssetImage('assets/2rotate.jpeg'),
+                image: const AssetImage('assets/[2rotate.jpeg'),
                 fit: BoxFit.cover,
                 colorFilter: ColorFilter.mode(
                   Colors.black.withOpacity(0.35),
@@ -138,7 +138,6 @@ class _TimerScreenState extends State<TimerScreen>
               child: Column(
                 children: [
                   SizedBox(height: screenHeight * 0.05),
-
                   Expanded(
                     child: Center(
                       child: Column(
@@ -191,8 +190,8 @@ class _TimerScreenState extends State<TimerScreen>
                               decoration: BoxDecoration(
                                 gradient: const LinearGradient(
                                   colors: [
-                                    Color(0xFFE84141), // Orange
-                                    Color(0xFFFFC107), // Yellow
+                                    Color(0xFFE84141), // Orange //
+                                    Color(0xFFFFC107), // Yellow //
 
                                   ],
                                   begin: Alignment.topLeft,
@@ -216,8 +215,8 @@ class _TimerScreenState extends State<TimerScreen>
                                   Navigator.pop(context, _selectedAudio);
                                 },
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.transparent, // 🔑 important
-                                  shadowColor: Colors.transparent,     // 🔑 important
+                                  backgroundColor: Colors.transparent, // 🔑 important 🔑 //
+                                  shadowColor: Colors.transparent,     // 🔑 important 🔑 //
                                   foregroundColor: Colors.white,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(26),
@@ -234,19 +233,16 @@ class _TimerScreenState extends State<TimerScreen>
                               ),
                             ),
                           ),
-
                         ],
                       ),
                     ),
                   ),
-
                   SizedBox(height: screenHeight * 0.12),
                 ],
               ),
             ),
           ),
-
-          // ===================== DARKER GLASS BOTTOM BAR =====================
+          // ===================== DARKER GLASS BOTTOM BAR ===================== //
           Positioned(
             bottom: 14,
             left: horizontalPadding,

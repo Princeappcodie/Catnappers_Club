@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:Catnappers/Subscription.dart';
+import 'Subscription.dart';
 
 class SubscriptionPopup {
   static void show(BuildContext context) {

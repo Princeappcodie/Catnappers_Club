@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:ui';
 import 'dart:io';
-import 'package:Catnappers/models/audio_track.dart';
-import 'package:Catnappers/playscreen.dart';
-import 'package:Catnappers/Alarm.dart';
+import 'package:Catnappers_club/playscreen.dart';
 import 'package:flutter/material.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -12,11 +10,23 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:dio/dio.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:audio_session/audio_session.dart';
+import 'Alarm.dart';
 import 'Subscription.dart';
+import 'models/audio_track.dart' show AudioTrack;
+import 'models/authmanager.dart';
+import 'services/dynamic_dialogue_service.dart';
+import 'widgets/dynamic_dialogue_widget.dart';
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 class Homescreen extends StatefulWidget {
-  const Homescreen({Key? key}) : super(key: key);
+  final bool isAuthenticatedUser;
+
+  const Homescreen({
+    Key? key,
+    this.isAuthenticatedUser = false,
+  }) : super(key: key);
 
   @override
   State<Homescreen> createState() => _HomescreenState();
@@ -25,17 +35,46 @@ class Homescreen extends StatefulWidget {
 class _HomescreenState extends State<Homescreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
 
+  Future<void> _checkAndShowDynamicDialogue() async {
+    // Add a slight delay to ensure everything is ready
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      print('DynamicDialogue: Running check on Home Screen...');
+      final config = await _dynamicDialogueService.getDialogueConfig();
+      if (config != null && await _dynamicDialogueService.shouldShowDialogue(config)) {
+        if (!mounted) return;
+        print('DynamicDialogue: Showing dialogue to user...');
+        showDialog(
+          context: context,
+          builder: (BuildContext context) {
+            return DynamicDialogue(config: config);
+          },
+        );
+        // Mark as shown once it's displayed
+        await _dynamicDialogueService.markAsShown();
+      } else {
+        print('DynamicDialogue: Not showing dialogue today');
+      }
+    });
+  }
+
   int _trialDaysLeft = 0;
   bool _hideTrialBanner = false;
+  bool _isGuestUser = false;
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  Future<void> _loadGuestStatus() async {
+    _isGuestUser = await AuthManager.isGuest();
+  }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////
   Future<void> _verifyAuthUser() async {
     final user = FirebaseAuth.instance.currentUser;
 
     if (user == null) {
+      if (_isGuestUser) return; // allow guest
       _forceLogout();
       return;
     }
+
 
     try {
       await user.reload();
@@ -58,7 +97,7 @@ class _HomescreenState extends State<Homescreen>
     }
   }
 
-/////////////////////////////////////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
   Future<void> _loadTrialBannerDismissState() async {
     final prefs = await SharedPreferences.getInstance();
     _hideTrialBanner = prefs.getBool('hide_trial_banner') ?? false;
@@ -73,9 +112,9 @@ class _HomescreenState extends State<Homescreen>
           (route) => false,
     );
   }
-/////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////////////////////////////
 
-  bool _isAlarmEnabled = true; // 🔔 ON by default
+  bool _isAlarmEnabled = true; // 🔔 ON by default 🔔 //
   final ScrollController _scrollController = ScrollController();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -152,6 +191,8 @@ class _HomescreenState extends State<Homescreen>
   List<AnimationController> _trackCardControllers = [];
 
 
+  final DynamicDialogueService _dynamicDialogueService = DynamicDialogueService();
+
   @override
   void initState() {
     super.initState();
@@ -159,21 +200,30 @@ class _HomescreenState extends State<Homescreen>
     WidgetsBinding.instance.addObserver(this);
 
     // 🔐 Validate auth (detect deleted / disabled user)
-    _verifyAuthUser();
+    _loadGuestStatus().then((_) {
+      if (!_isGuestUser) {
+        _verifyAuthUser(); // only for signed-in users
+      }
+      // Check for dynamic dialogue after status loaded
+      _checkAndShowDynamicDialogue();
+    });
 
-    // 🧪 Safety default
+
+    // 🧪 Safety default 🧪 //
     _isTrialActive = false;
 
     selectedTimer = 20;
-// 🔔 Load saved alarm sound (persistent)
+// 🔔 Load saved alarm sound (persistent) 🔔//
     _loadSelectedAlarm();
 
     _scrollController.addListener(_onScroll);
     _setupConnectivityListener();
     _checkConnectivity();
 
-    // 🔥 LISTEN auth changes (login/logout)
+    // 🔥 LISTEN auth changes (login/logout)  🔥 //
     FirebaseAuth.instance.authStateChanges().listen((user) {
+      if (_isGuestUser) return;
+
       if (user != null) {
         _setupSubscriptionListener();
       } else {
@@ -181,15 +231,16 @@ class _HomescreenState extends State<Homescreen>
       }
     });
 
-    // 🔥🔥 CRITICAL: FORCE subscription + trial check on app start
+
+    // 🔥🔥 CRITICAL: FORCE subscription + trial check on app start 🔥🔥 //
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (FirebaseAuth.instance.currentUser != null) {
         _setupSubscriptionListener();
       }
-      _fetchData(); // now safe
+      _fetchData(); // now safe //
     });
 
-    // 🎬 Animations
+    // 🎬 Animations 🎬 //
     _welcomeTextController =
         AnimationController(duration: const Duration(milliseconds: 1000), vsync: this);
 
@@ -227,7 +278,7 @@ class _HomescreenState extends State<Homescreen>
     _toggleButtonsController.forward();
     _bottomNavController.forward();
 
-    // 🟠 Load banner dismiss preference
+    // 🟠 Load banner dismiss preference  🟠 //
     _loadTrialBannerDismissState();
   }
 
@@ -264,8 +315,14 @@ class _HomescreenState extends State<Homescreen>
 
     if (_isOffline) {
       final downloadedTracks = await getDownloadedTracks();
+
+      // 🔥 FILTER BY CURRENT SEGMENT
+      final filteredTracks = downloadedTracks
+          .where((track) => track.category == currentCategory)
+          .toList();
+
       setState(() {
-        tracks = downloadedTracks;
+        tracks = filteredTracks;
         _isDownloaded = {};
         _downloadProgress = {};
         _isDownloading = {};
@@ -331,6 +388,11 @@ class _HomescreenState extends State<Homescreen>
 
 
   Future<void> _downloadTrack(int index) async {
+    if (_isGuestUser) {
+      _showSignupDialog();
+      return;
+    }
+
     final user = _auth.currentUser;
     if (user == null) return;
 
@@ -347,10 +409,10 @@ class _HomescreenState extends State<Homescreen>
     final cancelToken = CancelToken();
     _downloadCancelTokens[index] = cancelToken;
 
-    // ✅ init notifier (once)
+    // ✅ init notifier (once) ✅  //
     _downloadProgressNotifier[index] ??= ValueNotifier<double?>(0.0);
 
-    // ✅ low-frequency UI update (SAFE)
+    // ✅ low-frequency UI update (SAFE) ✅ //
     setState(() {
       _isDownloading[index] = true;
     });
@@ -364,7 +426,7 @@ class _HomescreenState extends State<Homescreen>
       await dio.download(
         track.fullAudioUrl,
         filePath,
-        cancelToken: cancelToken, // ✅ ADD THIS
+        cancelToken: cancelToken, // ✅ ADD THIS ✅ //
         onReceiveProgress: (received, total) {
           if (total != -1) {
             _downloadProgressNotifier[index]!.value = received / total;
@@ -373,13 +435,13 @@ class _HomescreenState extends State<Homescreen>
       );
 
 
-      // ✅ finish download (SAFE)
+      // ✅ finish download (SAFE) ✅ //
       setState(() {
         _isDownloaded[index] = true;
         _isDownloading[index] = false;
       });
 
-      // ✅ hide progress indicator
+      // ✅ hide progress indicator ✅ //
       _downloadProgressNotifier[index]!.value = null;
 
       final prefs = await SharedPreferences.getInstance();
@@ -402,15 +464,15 @@ class _HomescreenState extends State<Homescreen>
         );
       }
 
-      // ✅ Reset UI safely
+      // ✅ Reset UI safely ✅ //
       setState(() {
         _isDownloading[index] = false;
       });
 
-      // ✅ Remove progress indicator
+      // ✅ Remove progress indicator ✅ //
       _downloadProgressNotifier[index]?.value = null;
 
-      // ✅ Clean cancel token
+      // ✅ Clean cancel token ✅ //
       _downloadCancelTokens.remove(index);
     }
 
@@ -449,6 +511,29 @@ class _HomescreenState extends State<Homescreen>
 
   void _setupSubscriptionListener() {
     final User? user = _auth.currentUser;
+    if (_isGuestUser) {
+      SharedPreferences.getInstance().then((prefs) {
+        final localSub = prefs.getBool('local_isSubscribed') ?? false;
+        final localEndStr = prefs.getString('local_subscriptionEndDate');
+        bool validLocal = false;
+        if (localSub && localEndStr != null) {
+          try {
+            final end = DateTime.parse(localEndStr);
+            validLocal = end.isAfter(DateTime.now());
+          } catch (_) {
+            validLocal = false;
+          }
+        }
+        setState(() {
+          _isSubscribed = validLocal;
+          _isPaidSubscriber = validLocal;
+          _isTrialActive = false;
+          _trialDaysLeft = 0;
+        });
+      });
+      return;
+    }
+
     if (user == null) {
       setState(() {
         _isSubscribed = false;
@@ -477,9 +562,10 @@ class _HomescreenState extends State<Homescreen>
 
       final data = snapshot.data()!;
       bool baseSubscribed = data['isSubscribed'] ?? false;
+      bool isLifetime = data['isLifetime'] ?? false;
       String? trialEndsAt = data['trialEndsAt'];
 
-      if (trialEndsAt == null && !(data['isSubscribed'] ?? false)) {
+      if (trialEndsAt == null && !baseSubscribed && !isLifetime) {
         final newTrialEnd = DateTime.now().add(const Duration(days: 7));
 
         await _firestore.collection('users').doc(user.uid).set({
@@ -491,15 +577,23 @@ class _HomescreenState extends State<Homescreen>
         trialEndsAt = newTrialEnd.toIso8601String();
       }
 
-      if (data.containsKey('subscriptionEndDate')) {
-        final Timestamp? endTimestamp = data['subscriptionEndDate'] as Timestamp?;
-        if (endTimestamp != null && endTimestamp.toDate().isBefore(DateTime.now())) {
+      // Check expiry ONLY if not lifetime and end date exists
+      if (!isLifetime && data.containsKey('subscriptionEndDate')) {
+        DateTime? endDate;
+        try {
+          // Handle both Timestamp and String formats for backward compatibility
+          final dynamic endDateData = data['subscriptionEndDate'];
+          if (endDateData is Timestamp) {
+            endDate = endDateData.toDate();
+          } else if (endDateData is String) {
+            endDate = DateTime.parse(endDateData);
+          }
+        } catch (e) {
+          print('Error parsing subscriptionEndDate: $e');
+        }
+
+        if (endDate != null && endDate.isBefore(DateTime.now())) {
           baseSubscribed = false;
-          await _firestore.collection('users').doc(user.uid).update({
-            'isSubscribed': false,
-            'subscriptionEndDate': null,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
         }
       }
 
@@ -652,7 +746,7 @@ class _HomescreenState extends State<Homescreen>
             ),
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('Later', style: TextStyle(color: Colors.grey)),
+              child: const Text('Maybe Later', style: TextStyle(color: Colors.grey)),
             ),
           ],
         );
@@ -935,12 +1029,371 @@ class _HomescreenState extends State<Homescreen>
         break;
     }
   }
+  ////////////////////////////////////////////////////////////////////////////////
+  void _showSignupDialog() {
+    showGeneralDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Signup',
+      barrierColor: Colors.black.withOpacity(0.35),
+      transitionDuration: const Duration(milliseconds: 300),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return ScaleTransition(
+          scale: CurvedAnimation(parent: animation, curve: Curves.easeOutBack),
+          child: Dialog(
+            backgroundColor: Colors.transparent,
+            insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+            child: Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Colors.blue.shade500.withOpacity(0.95),
+                    Colors.purple.shade400.withOpacity(0.95),
+                    Colors.indigo.shade900.withOpacity(0.95),
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(26),
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.35),
+                  width: 1.4,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.6),
+                    blurRadius: 30,
+                    offset: const Offset(0, 18),
+                  ),
+                ],
+              ),
+              padding: const EdgeInsets.fromLTRB(22, 26, 22, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 🔒 Icon
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.amber.shade400,
+                          Colors.orange.shade500,
+                        ],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.orange.withOpacity(0.6),
+                          blurRadius: 14,
+                          spreadRadius: 1,
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.lock_rounded,
+                      color: Colors.white,
+                      size: 32,
+                    ),
+                  ),
 
+                  const SizedBox(height: 18),
+
+                  // 📝 Title
+                  const Text(
+                    'Unlock Full Access',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.6,
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // 📄 Description
+                  Text(
+                    'Sign up to access Tonic & Melodic sessions,\nfull audio tracks and downloads.\n\nStart your 7-day free trial now ✨',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white.withOpacity(0.9),
+                      fontSize: 14.5,
+                      height: 1.5,
+                    ),
+                  ),
+
+                  const SizedBox(height: 26),
+
+                  // 🚀 CTA buttons 🚀 //
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.pop(context),
+                          style: OutlinedButton.styleFrom(
+                            side: BorderSide(
+                              color: Colors.white.withOpacity(0.6),
+                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(22),
+                            ),
+                          ),
+                          child: const Text(
+                            'Maybe Later',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      const SizedBox(width: 14),
+
+
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: () {
+                            Navigator.pop(context);
+                            Navigator.pushReplacementNamed(context, '/signup');
+                          },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.amber.shade400,
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            elevation: 12,
+                            shadowColor: Colors.amber.withOpacity(0.6),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(22),
+                            ),
+                          ),
+                          child: const Text(
+                            'Sign Up',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.8,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+////////////////////////////////////////////////////////////////////////////////////
+  Future<void> _checkAndShowHeadphoneDialog() async {
+    final prefs = await SharedPreferences.getInstance();
+    final hasShown = prefs.getBool('has_shown_headphone_dialog') ?? false;
+
+    if (!hasShown && mounted) {
+      // 🎧 Check if headphones are currently connected
+      try {
+        final session = await AudioSession.instance;
+        final devices = await session.getDevices();
+        
+        final hasHeadphones = devices.any((device) =>
+            device.type == AudioDeviceType.wiredHeadphones ||
+            device.type == AudioDeviceType.wiredHeadset ||
+            device.type == AudioDeviceType.bluetoothA2dp ||
+            device.type == AudioDeviceType.bluetoothLe);
+
+        if (hasHeadphones) {
+          // User is already using headphones, mark it as shown so they aren't bothered later
+          await prefs.setBool('has_shown_headphone_dialog', true);
+          return;
+        }
+      } catch (e) {
+        debugPrint("Error checking audio session: $e");
+        // If detection fails, we proceed with the dialog to ensure the user gets the message once
+      }
+
+      await showGeneralDialog(
+        context: context,
+        barrierDismissible: true,
+        barrierLabel: 'Headphones',
+        barrierColor: Colors.black.withOpacity(0.35),
+        transitionDuration: const Duration(milliseconds: 400),
+        pageBuilder: (context, animation, secondaryAnimation) => const SizedBox.shrink(),
+        transitionBuilder: (context, animation, secondaryAnimation, child) {
+          final curve = CurvedAnimation(parent: animation, curve: Curves.easeOutBack);
+          return ScaleTransition(
+            scale: curve,
+            child: FadeTransition(
+              opacity: animation,
+              child: Dialog(
+                backgroundColor: Colors.transparent,
+                insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Colors.blue.shade500.withOpacity(0.95),
+                        Colors.purple.shade400.withOpacity(0.95),
+                        Colors.indigo.shade900.withOpacity(0.95),
+                      ],
+                    ),
+                    borderRadius: BorderRadius.circular(26),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.35),
+                      width: 1.4,
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.6),
+                        blurRadius: 30,
+                        offset: const Offset(0, 18),
+                      ),
+                    ],
+                  ),
+                  padding: const EdgeInsets.fromLTRB(22, 26, 22, 24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 🎧 Icon
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: LinearGradient(
+                            colors: [
+                              Colors.blue.shade400,
+                              Colors.blue.shade600,
+                            ],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.blue.withOpacity(0.6),
+                              blurRadius: 14,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                        child: const Icon(
+                          Icons.headphones_rounded,
+                          color: Colors.white,
+                          size: 32,
+                        ),
+                      ),
+
+                      const SizedBox(height: 18),
+
+                      // 📝 Title
+                      const Text(
+                        'Better Experience',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.6,
+                        ),
+                      ),
+
+                      const SizedBox(height: 10),
+
+                      // 📄 Description
+                      Text(
+                        'Use headphones for a better and more immersive experience.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.9),
+                          fontSize: 14.5,
+                          height: 1.5,
+                        ),
+                      ),
+
+                      const SizedBox(height: 26),
+
+                      // 🚀 CTA buttons 🚀 //
+                      Row(
+                        children: [
+
+                          const SizedBox(width: 14),
+
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () => Navigator.pop(context),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.amber.shade400,
+                                foregroundColor: Colors.black,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                elevation: 12,
+                                shadowColor: Colors.amber.withOpacity(0.6),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(22),
+                                ),
+                              ),
+                              child: const Text(
+                                'OK',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800,
+                                  letterSpacing: 0.8,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      );
+
+      // ✅ SET FLAG AFTER DIALOG IS CLOSED (no matter how it's closed)
+      final finalPrefs = await SharedPreferences.getInstance();
+      await finalPrefs.setBool('has_shown_headphone_dialog', true);
+    }
+  }
+
+  ////////////////////////////////////////////////////////////////////////////////////
   void _handleSegmentChange(int index) {
+    // ✅ 1. BLOCK guest BEFORE state change ✅ //
+    if (_isGuestUser && index != 0) {
+      _showSignupDialog();
+      return;
+    }
+
+    // ✅ 2. Stop audio BEFORE state change ✅ //
+    if (isPlaying) {
+      audioPlayer.stop();
+      _timer?.cancel();
+      _previewTimer?.cancel();
+      setState(() {
+        isPlaying = false;
+        currentPlayingIndex = null;
+      });
+    }
+
+    // ✅ 3. Dispose controllers SAFELY ✅ //
+    for (var controller in _trackCardControllers) {
+      controller.dispose();
+    }
+    _trackCardControllers.clear();
+
+    // ✅ 4. NOW update UI state (atomic & safe) ✅ //
     setState(() {
       for (int i = 0; i < _isSelected.length; i++) {
         _isSelected[i] = i == index;
       }
+
       _currentThemeIndex = index;
 
       tracks.clear();
@@ -951,23 +1404,17 @@ class _HomescreenState extends State<Homescreen>
       _isDownloaded.clear();
       _dataFetched = false;
     });
-    if (isPlaying) {
-      audioPlayer.stop();
-      _timer?.cancel();
-      _previewTimer?.cancel();
-      setState(() {
-        isPlaying = false;
-        currentPlayingIndex = null;
-      });
-    }
-    for (var controller in _trackCardControllers) {
-      controller.dispose();
-    }
-    _trackCardControllers.clear();
+
+    // ✅ 5. Fetch after rebuild ✅ //
     _fetchData();
   }
 
   void _toggleLike(int index) async {
+    if (_isGuestUser) {
+      _showSignupDialog();
+      return;
+    }
+
     final user = _auth.currentUser;
     if (user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1041,11 +1488,11 @@ class _HomescreenState extends State<Homescreen>
             final crossAxisCount = width < 360 ? 2 : width < 520 ? 3 : 4;
             final fontSize = (width / 26).clamp(11.0, 14.0);
 
-            // Use the expanded colors for the dialog background
+            // Use the expanded colors for the dialog background //
             List<Color> dialogGradientColors;
 
             if (currentCategory == 'Sonic') {
-              // 🔥 Sonic – warm energetic
+              // 🔥 Sonic – warm energetic  🔥 //
               dialogGradientColors = [
                 Colors.red.shade300.withOpacity(0.95),
                 Colors.orange.shade300.withOpacity(0.95),
@@ -1061,7 +1508,7 @@ class _HomescreenState extends State<Homescreen>
               ];
             }
             else {
-              // 🎵 Melodic – soft dreamy
+              // 🎵 Melodic – soft dreamy    🎵 //
               dialogGradientColors = _segmentGradientColors[currentCategory]!
                   .map((c) => c.withOpacity(0.95))
                   .toList();
@@ -1122,7 +1569,7 @@ class _HomescreenState extends State<Homescreen>
                     ),
                     const Divider(color: Colors.white30, thickness: 1),
 
-                    // Scrollable Content
+                    // Scrollable Content //
                     Flexible(
                       child: SingleChildScrollView(
                         padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
@@ -1130,7 +1577,7 @@ class _HomescreenState extends State<Homescreen>
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            // Best Environment
+                            // Best Environment //
                             Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -1151,7 +1598,7 @@ class _HomescreenState extends State<Homescreen>
                             ),
                             const SizedBox(height: 12),
 
-                            // Description
+                            // Description //
                             Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -1175,7 +1622,7 @@ class _HomescreenState extends State<Homescreen>
                             Divider(color: Colors.white.withOpacity(0.2), thickness: 0.8),
                             const SizedBox(height: 8),
 
-                            // Wake-up Alarm Toggle
+                            // Wake-up Alarm Toggle //
                             Center(
                               child: Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -1227,7 +1674,7 @@ class _HomescreenState extends State<Homescreen>
 
                             const SizedBox(height: 4),
                             Divider(color: Colors.white.withOpacity(0.25), thickness: 0.9),
-                            const SizedBox(height: 4), // 👈 brings timers closer
+                            const SizedBox(height: 4), // 👈 brings timers closer 👈 //
 
 
                             // Timer Grid
@@ -1237,7 +1684,7 @@ class _HomescreenState extends State<Homescreen>
                               itemCount: durations.length,
                               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                                 crossAxisCount: crossAxisCount,
-                                mainAxisSpacing: 18, // 👈 vertical spacing between timer rows
+                                mainAxisSpacing: 18, // 👈 vertical spacing between timer rows 👈//
                                 crossAxisSpacing: 8,
                                 childAspectRatio: 2.6,
                               ),
@@ -1294,18 +1741,33 @@ class _HomescreenState extends State<Homescreen>
                                 child: ElevatedButton(
                                   onPressed: selectedTimer == null
                                       ? null
-                                      : () {
+                                      : () async {
                                           final minutes = selectedTimer!;
-                                          final audioUrl = _isSubscribed
-                                              ? track.fullAudioUrl
-                                              : track.previewAudioUrl;
+
+                                          // 🎧 Check for headphone reminder BEFORE playing audio 🎧
+                                          await _checkAndShowHeadphoneDialog();
+
+                                          final directory = await getApplicationDocumentsDirectory();
+                                          final localPath = '${directory.path}/${track.trackId}.mp3';
+
+                                          String audioUrl;
+
+                                          if (File(localPath).existsSync()) {
+                                            // ✅ PLAY LOCAL FILE FIRST (even if online) ✅ //
+                                            audioUrl = localPath;
+                                          } else {
+                                            // 🌐 fallback to remote 🌐 //
+                                            audioUrl = (_isGuestUser || !_isSubscribed)
+                                                ? track.previewAudioUrl
+                                                : track.fullAudioUrl;
+                                          }
 
                                           videos.shuffle();
                                           final randomVideoUrl = videos.isNotEmpty
                                               ? (videos.first['url'] ?? '').trim().replaceAll('"', '')
                                               : '';
 
-                                          Navigator.pop(context); // Close dialog
+                                          Navigator.pop(context); // Close dialog //
                                           Navigator.push(
                                             context,
                                             MaterialPageRoute(
@@ -1407,7 +1869,8 @@ class _HomescreenState extends State<Homescreen>
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (_isPaidSubscriber)
+                    if (_isPaidSubscriber && !_isGuestUser)
+
                       SizedBox(
                         width: 32,
                         height: 32,
@@ -1427,10 +1890,12 @@ class _HomescreenState extends State<Homescreen>
                         ),
                       ),
 
-                    if (_isPaidSubscriber)
+                    if (_isPaidSubscriber && !_isGuestUser)
+
                       const SizedBox(width: 10),
 
-                    if (_isPaidSubscriber)
+                    if (_isPaidSubscriber && !_isGuestUser)
+
                       SizedBox(
                         width: 40,
                         child: Opacity(
@@ -1858,7 +2323,6 @@ class _HomescreenState extends State<Homescreen>
                           icon: Icon(Icons.settings, size: 20),
                           label: 'Settings',
                         ),
-
                       ],
                     ),
                   ),

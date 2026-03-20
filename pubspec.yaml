@@ -1,4 +1,4 @@
-name: Catnappers
+name: Catnappers_club
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+39
+version: 1.0.1+2
 
 
 environment:
@@ -42,6 +42,7 @@ dependencies:
   video_player: ^2.9.5
   file_picker: ^10.1.9
   just_audio: ^0.10.3
+  audio_session: ^0.1.21
   connectivity_plus: ^6.1.4
   in_app_purchase: ^3.2.3
   cloud_functions: ^5.5.1
@@ -51,11 +52,13 @@ dependencies:
   path_provider: ^2.1.5
   country_code_picker: ^3.4.0
   sign_in_with_apple: ^7.0.1
-  google_sign_in: ^5.4.4
+  google_sign_in: ^6.2.1
   image_picker: ^1.2.0
   share_plus: ^7.2.1
   package_info_plus: ^9.0.0
-#  flutter_facebook_auth: ^6.2.0
+  url_launcher: ^6.2.6
+  alarm: ^4.0.0
+#  flutter_facebook_auth: ^6.2.0  #
 
 dev_dependencies:
   flutter_test:
@@ -113,6 +116,7 @@ flutter:
     - assets/melodic.jpeg
     - assets/facebook.jpeg
     - assets/google.jpeg
+    - assets/take-it-easy-relax.gif
 
 #    - assets/04-Meydan-Surreal-Forest(chosic.com).mp3
 #    - assets/sonic.mp3
@@ -162,4 +166,4 @@ flutter:
   #         weight: 700
   #
   # For details regarding fonts from package dependencies,
-  # see https://flutter.dev/to/font-from-package
+  # see https://flutter.dev/to/font-from-package.

@@ -2,9 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>NSPhotoLibraryUsageDescription</key>
-    <string>We need access to your photos to change the profile image.</string>
 
+    <key>AVAudioSessionCategory</key>
+    <string>AVAudioSessionCategoryPlayback</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Your app needs access to the photo library to allow you to select images for [specific feature, e.g., profile pictures, sharing content, etc.]</string>
 	<key>3</key>
 	<string>Catnappers</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
@@ -30,30 +34,25 @@
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
-
-
-<key>CFBundleURLTypes</key>
-<array>
-  <dict>
-    <key>CFBundleURLSchemes</key>
-    <array>
-      <string>fb1489944645538166</string>
-    </array>
-  </dict>
-</array>
-<key>FacebookAppID</key>
-<string>1489944645538166</string>
-<key>FacebookClientToken</key>
-<string>ae832b22cd99f4eb9da41e0eb0ac90d2</string>
-<key>FacebookDisplayName</key>
-<string>Catnappers Club</string>
-
-<key>com.apple.developer.associated-domains</key>
-<array>
-    <string>applinks:katnaperz.com</string>
-</array>
-
-
+			<key>CFBundleURLTypes</key>
+			<array>
+				<dict>
+					<key>CFBundleURLSchemes</key>
+					<array>
+						<string>fb1489944645538166</string>
+					</array>
+				</dict>
+			</array>
+			<key>FacebookAppID</key>
+			<string>1489944645538166</string>
+			<key>FacebookClientToken</key>
+			<string>ae832b22cd99f4eb9da41e0eb0ac90d2</string>
+			<key>FacebookDisplayName</key>
+			<string>Catnappers Club</string>
+			<key>com.apple.developer.associated-domains</key>
+			<array>
+				<string>applinks:catnappersclub.com</string>
+			</array>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>CFBundleURLSchemes</key>
@@ -66,14 +65,8 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Your app needs access to the photo library to allow you to select images for [specific feature, e.g., profile pictures, sharing content, etc.]</string>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>audio</string>
-	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -91,5 +84,11 @@
 	</array>
 	<key>com.apple.in-app-purchase</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+		<string>fetch</string>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>

@@ -8,6 +8,7 @@ import 'dart:io' show Platform;
 import 'dart:ui';
 import 'Signup.dart';
 import 'home.dart';
+import 'models/authmanager.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
@@ -30,7 +31,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // ================= EMAIL LOGIN =================
+  // ================= EMAIL LOGIN ================= //
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -42,10 +43,12 @@ class _LoginScreenState extends State<LoginScreen> {
         password: _passwordController.text.trim(),
       );
 
-      if (!mounted) return;
+      await AuthManager.setLoggedIn(); // ✅ ADD THIS
+
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const Homescreen()),
       );
+
     } on FirebaseAuthException catch (e) {
       String message = 'Login failed.';
       if (e.code == 'user-not-found') {
@@ -65,7 +68,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // ================= GOOGLE LOGIN =================
+  // ================= GOOGLE LOGIN ================= //
   Future<void> _signInWithGoogle() async {
     setState(() => _isLoading = true);
 
@@ -76,7 +79,7 @@ class _LoginScreenState extends State<LoginScreen> {
         return;
       }
 
-      // 🔒 BLOCK wrong provider
+      // 🔒 BLOCK wrong provider //
       final methods = await FirebaseAuth.instance
           .fetchSignInMethodsForEmail(googleUser.email);
 
@@ -97,6 +100,8 @@ class _LoginScreenState extends State<LoginScreen> {
       await FirebaseAuth.instance.signInWithCredential(credential);
 
       await _handleSocialLogin(userCred.user!);
+      await AuthManager.setLoggedIn();
+
 
       if (!mounted) return;
       Navigator.pushReplacement(
@@ -112,7 +117,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // ================= APPLE LOGIN =================
+  // ================= APPLE LOGIN ================= //
   Future<void> _signInWithApple() async {
     setState(() => _isLoading = true);
 
@@ -133,6 +138,8 @@ class _LoginScreenState extends State<LoginScreen> {
       await FirebaseAuth.instance.signInWithCredential(oauthCredential);
 
       await _handleSocialLogin(userCred.user!);
+      await AuthManager.setLoggedIn();
+
 
       if (!mounted) return;
       Navigator.pushReplacement(
@@ -148,19 +155,19 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  // ================= SAFE SOCIAL LOGIN HANDLER =================
+  // ================= SAFE SOCIAL LOGIN HANDLER ================= //
   Future<void> _handleSocialLogin(User user) async {
     final firestoreRef =
     FirebaseFirestore.instance.collection('users').doc(user.uid);
 
     final firestoreSnap = await firestoreRef.get();
 
-    // 🔴 FIX: Re-create user data if deleted earlier
+    // 🔴 FIX: Re-create user data if deleted earlier //
     if (!firestoreSnap.exists) {
       final now = DateTime.now();
       final trialEnd = now.add(const Duration(days: 7));
 
-      // Firestore
+      // Firestore //
       await firestoreRef.set({
         'name': user.displayName ?? 'No Name',
         'email': user.email ?? '',
@@ -171,7 +178,7 @@ class _LoginScreenState extends State<LoginScreen> {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      // Realtime DB
+      // Realtime DB //
       await FirebaseDatabase.instance.ref('users/${user.uid}').set({
         'name': user.displayName ?? 'No Name',
         'email': user.email ?? '',
@@ -181,8 +188,32 @@ class _LoginScreenState extends State<LoginScreen> {
       });
     }
   }
-
-  // ================= UI (UNCHANGED) =================
+  // ================= SAFE SOCIAL LOGIN HANDLER ================= //
+  Future<void> _createGuestRecord() async {
+    final guestId = await AuthManager.getOrCreateGuestId();
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(guestId)
+          .set({
+            'isGuest': true,
+            'guestId': guestId,
+            'isSubscribed': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+      final now = DateTime.now();
+      await FirebaseDatabase.instance
+          .ref('users/$guestId')
+          .update({
+            'isGuest': true,
+            'guestId': guestId,
+            'isSubscribed': false,
+            'createdAt': now.toIso8601String(),
+          });
+    } catch (_) {}
+  }
+////////////////////////////////////////////////////////////////////////////////
+  // ================= UI (UNCHANGED) ================= //
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -259,10 +290,10 @@ class _LoginScreenState extends State<LoginScreen> {
               width: double.infinity,
               height: 54,
               child: ElevatedButton(
-                onPressed: _isLoading ? null : _handleLogin,
+                onPressed: _isLoading ? null :_handleLogin,
                 child: _isLoading
                     ? const CircularProgressIndicator(color: Colors.blue)
-                    : const Text('Login', style: TextStyle(fontSize: 18)),
+                    : const Text('Login', style: TextStyle(fontSize: 18, color: Colors.black)),
               ),
             ),
 
@@ -271,7 +302,7 @@ class _LoginScreenState extends State<LoginScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12), // 👈 increase width here
+                padding: const EdgeInsets.symmetric(horizontal: 12), // 👈 increase width here 👈 //
                 child: IconButton(
                   onPressed: _isLoading ? null : _signInWithGoogle,
                   icon: ClipOval(
@@ -301,6 +332,27 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               child: const Text(
                 "Don't have an account? Sign Up",
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+            TextButton(
+              onPressed: () {},
+              child: const Text('OR', style: TextStyle(color: Colors.white)),
+            ),
+
+            TextButton(
+              onPressed: () async {
+                await AuthManager.setGuest(); // ✅ mark guest ✅ //
+                await _createGuestRecord();
+
+                if (!mounted) return;
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (_) => const Homescreen()),
+                );
+              },
+              child: const Text(
+              'Continue as Guest',
                 style: TextStyle(color: Colors.white),
               ),
             ),

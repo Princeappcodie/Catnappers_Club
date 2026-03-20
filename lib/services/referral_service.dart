@@ -16,7 +16,7 @@ class ReferralService {
   final CollectionReference _redemptionsCollection = 
       FirebaseFirestore.instance.collection('referral_redemptions');
   
-  // Generate a unique referral code
+  // Generate a unique referral code //
   String _generateReferralCode() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     final random = Random();
@@ -25,22 +25,22 @@ class ReferralService {
     );
   }
   
-  // Create a new referral for the current user
+  // Create a new referral for the current user //
   Future<ReferralModel?> createReferral({int discountPercentage = 10, int maxUsage = 10}) async {
     try {
       final User? currentUser = _auth.currentUser;
       if (currentUser == null) return null;
       
-      // Check if user already has a referral code
+      // Check if user already has a referral code //
       final existingReferral = await getUserReferral();
       if (existingReferral != null) return existingReferral;
       
-      // Generate a unique referral code
+      // Generate a unique referral code //
       final referralCode = _generateReferralCode();
       
       // Create the referral document
       final referralData = ReferralModel(
-        id: '', // Will be set after document creation
+        id: '', // Will be set after document creation //
         referrerId: currentUser.uid,
         referrerCode: referralCode,
         discountPercentage: discountPercentage,
@@ -51,7 +51,7 @@ class ReferralService {
       // Save to Firestore
       final docRef = await _referralsCollection.add(referralData.toFirestore());
       
-      // Return the created referral with the document ID
+      // Return the created referral with the document ID //
       return referralData.copyWith(id: docRef.id);
     } catch (e) {
       debugPrint('Error creating referral: $e');
@@ -59,7 +59,7 @@ class ReferralService {
     }
   }
   
-  // Get the current user's referral
+  // Get the current user's referral //
   Future<ReferralModel?> getUserReferral() async {
     try {
       final User? currentUser = _auth.currentUser;
@@ -79,7 +79,7 @@ class ReferralService {
     }
   }
   
-  // Get a referral by code
+  // Get a referral by code //
   Future<ReferralModel?> getReferralByCode(String code) async {
     try {
       final querySnapshot = await _referralsCollection
@@ -96,27 +96,27 @@ class ReferralService {
     }
   }
   
-  // Create a dynamic link for sharing
-  // AppLinks instance for handling deep links
+  // Create a dynamic link for sharing //
+  // AppLinks instance for handling deep links //
   final AppLinks _appLinks = AppLinks();
   
-  // Initialize app links handling
+  // Initialize app links handling //
   void initAppLinks() {
     _appLinks.uriLinkStream.listen((Uri uri) {
-      // Handle incoming links
+      // Handle incoming links //
       handleIncomingLink(uri);
     });
   }
   
-  // Handle incoming app links
+  // Handle incoming app links //
   void handleIncomingLink(Uri uri) {
     try {
-      // Extract referral code from URI
+      // Extract referral code from URI //
       final pathSegments = uri.pathSegments;
       if (pathSegments.isNotEmpty && pathSegments[0] == 'refer') {
         final referralCode = uri.queryParameters['code'];
         if (referralCode != null) {
-          // Process the referral code
+          // Process the referral code //
           applyReferralCode(referralCode);
         }
       }
@@ -127,9 +127,9 @@ class ReferralService {
   
   Future<Uri?> createDynamicLink(String referralCode) async {
     try {
-      // Create a URL with your domain
-      // Note: You need to set up app links/universal links with this domain
-      final url = Uri.parse('https://katnaperz.com/refer?code=$referralCode');
+      // Create a URL with your domain //
+      // Note: You need to set up app links/universal links with this domain //
+      final url = Uri.parse('https://catnappersclub.com/refer?code=$referralCode');
       return url;
     } catch (e) {
       debugPrint('Error creating link: $e');
@@ -137,10 +137,10 @@ class ReferralService {
     }
   }
   
-  // Share referral link
+  // Share referral link //
   Future<void> shareReferralLink(BuildContext context) async {
     try {
-      // Get or create user's referral
+      // Get or create user's referral //
       final referral = await getUserReferral() ?? await createReferral();
       if (referral == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -149,7 +149,7 @@ class ReferralService {
         return;
       }
       
-      // Create dynamic link
+      // Create dynamic link //
       final dynamicLink = await createDynamicLink(referral.referrerCode);
       if (dynamicLink == null) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -158,10 +158,10 @@ class ReferralService {
         return;
       }
       
-      // Share the link
+      // Share the link //
       await Share.share(
-        'Join Katnaperz using my referral code and get ${referral.discountPercentage}% off your subscription! $dynamicLink',
-        subject: 'Katnaperz Referral',
+        'Join Catnappers Club using my referral code and get ${referral.discountPercentage}% off your subscription! $dynamicLink',
+        subject: 'Catnappers Club Referral',
       );
     } catch (e) {
       debugPrint('Error sharing referral link: $e');
@@ -171,29 +171,29 @@ class ReferralService {
     }
   }
   
-  // Apply a referral code
+  // Apply a referral code //
   Future<bool> applyReferralCode(String code) async {
     try {
       final User? currentUser = _auth.currentUser;
       if (currentUser == null) return false;
       
-      // Get the referral
+      // Get the referral //
       final referral = await getReferralByCode(code);
       if (referral == null || !referral.isValid()) return false;
       
-      // Check if user is trying to use their own code
+      // Check if user is trying to use their own code //
       if (referral.referrerId == currentUser.uid) return false;
       
-      // Check if user has already used this code
+      // Check if user has already used this code //
       if (referral.redeemedBy.contains(currentUser.uid)) return false;
       
-      // Update the referral document to add this user to redeemedBy list
+      // Update the referral document to add this user to redeemedBy list //
       await _referralsCollection.doc(referral.id).update({
         'redeemedBy': FieldValue.arrayUnion([currentUser.uid]),
         'usageCount': FieldValue.increment(1),
       });
       
-      // Store the referral code in user's document for later use
+      // Store the referral code in user's document for later use //
       await _firestore.collection('users').doc(currentUser.uid).update({
         'appliedReferralCode': code,
         'referralDiscount': referral.discountPercentage,
@@ -206,17 +206,17 @@ class ReferralService {
     }
   }
   
-  // Record a successful referral redemption
+  // Record a successful referral redemption //
   Future<bool> recordRedemption(String referralCode, String subscriptionId, int discountApplied) async {
     try {
       final User? currentUser = _auth.currentUser;
       if (currentUser == null) return false;
       
-      // Get the referral
+      // Get the referral //
       final referral = await getReferralByCode(referralCode);
       if (referral == null) return false;
       
-      // Create redemption record
+      // Create redemption record //
       final redemption = ReferralRedemption(
         id: '',
         referralId: referral.id,
@@ -226,16 +226,16 @@ class ReferralService {
         subscriptionId: subscriptionId,
       );
       
-      // Save redemption to Firestore
+      // Save redemption to Firestore //
       await _redemptionsCollection.add(redemption.toFirestore());
       
-      // Update the referral document
+      // Update the referral document //
       await _referralsCollection.doc(referral.id).update({
         'usageCount': FieldValue.increment(1),
         'redeemedBy': FieldValue.arrayUnion([currentUser.uid]),
       });
       
-      // Clear the applied referral from user's document
+      // Clear the applied referral from user's document //
       await _firestore.collection('users').doc(currentUser.uid).update({
         'appliedReferralCode': FieldValue.delete(),
         'referralDiscount': FieldValue.delete(),
@@ -248,7 +248,7 @@ class ReferralService {
     }
   }
   
-  // Get user's applied discount (if any)
+  // Get user's applied discount (if any) //
   Future<int> getUserDiscount() async {
     try {
       final User? currentUser = _auth.currentUser;
@@ -265,7 +265,7 @@ class ReferralService {
     }
   }
   
-  // Show referral code dialog
+  // Show referral code dialog //
   void showReferralCodeDialog(BuildContext context, String code) {
     showDialog(
       context: context,
@@ -297,5 +297,4 @@ class ReferralService {
       ),
     );
   }
-  
 }

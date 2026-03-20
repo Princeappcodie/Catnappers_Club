@@ -95,16 +95,18 @@ class _ReferralScreenState extends State<ReferralScreen> {
         children: [
           // Header image
           Image.asset(
-            'assets/images/referral_banner.png',
+            'assets/sleeping-cat-3.jpeg',
             height: 200,
             fit: BoxFit.contain,
             errorBuilder: (context, error, stackTrace) => Container(
               height: 200,
               color: Colors.grey[200],
-              child: const Icon(Icons.people, size: 80, color: Colors.grey),
+              child: Center(
+
+              ),
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 2),
           
           // Title //
           Text(
@@ -118,7 +120,7 @@ class _ReferralScreenState extends State<ReferralScreen> {
           // Description //
 
           Text(
-            'Invite your friends to join Katnaperz. They\'ll get ${_userReferral!.discountPercentage}% off their subscription, and you\'ll earn rewards!',
+            'Invite your friends to join Catnappers Club. They\'ll get ${_userReferral!.discountPercentage}% off their subscription, and you\'ll earn rewards!',
             textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodyLarge,
           ),
@@ -219,9 +221,7 @@ class _ReferralScreenState extends State<ReferralScreen> {
               ),
             ),
           ],
-          
           const SizedBox(height: 40),
-
           // How it works section //
           const Text(
             'How It Works',
@@ -256,6 +256,7 @@ class _ReferralScreenState extends State<ReferralScreen> {
     required String title,
     required String description,
   }) {
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 16.0),
       child: Row(
@@ -269,7 +270,6 @@ class _ReferralScreenState extends State<ReferralScreen> {
             ),
             child: Icon(icon, color: Theme.of(context).primaryColor),
           ),
-
 
           const SizedBox(width: 16),
           Expanded(

@@ -114,8 +114,8 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                   ScaleTransition(
                     scale: _scaleAnimation,
                     child: Container(
-                      width: 200,
-                      height: 200,
+                      width: 280,
+                      height: 280,
                       child: Center(
                         child: Image.asset(
                           'assets/sleeping-cat-3.jpeg',
